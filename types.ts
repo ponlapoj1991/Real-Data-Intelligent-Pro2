@@ -119,7 +119,29 @@ export interface DrillDownState {
 // --- Report Builder Types (Phase 5) ---
 
 export type ShapeType = 'rect' | 'circle' | 'triangle' | 'line' | 'arrow' | 'star';
-export type ElementType = 'widget' | 'text' | 'image' | 'shape';
+export type ElementType = 'widget' | 'text' | 'image' | 'shape' | 'table' | 'chart';
+
+// Table Cell Data
+export interface TableCell {
+  text: string;
+  rowSpan?: number;
+  colSpan?: number;
+  style?: ReportElementStyle;
+}
+
+// Table Data Structure
+export interface TableData {
+  rows: TableCell[][];
+  columnWidths?: number[];
+  rowHeights?: number[];
+}
+
+// Chart Data (for embedded charts from PPTX)
+export interface ChartData {
+  chartType: 'bar' | 'line' | 'pie' | 'area';
+  data: any[];
+  title?: string;
+}
 
 export interface ReportElementStyle {
   // Typography
@@ -143,14 +165,16 @@ export interface ReportElementStyle {
 
 export interface ReportElement {
   id: string;
-  type: ElementType; 
+  type: ElementType;
   shapeType?: ShapeType; // Only if type === 'shape'
   widgetId?: string;     // Only if type === 'widget'
   content?: string;      // Text content or Image Base64
+  tableData?: TableData; // Only if type === 'table'
+  chartData?: ChartData; // Only if type === 'chart'
   style?: ReportElementStyle;
-  
+
   // Positioning
-  x: number; 
+  x: number;
   y: number;
   w: number;
   h: number;
