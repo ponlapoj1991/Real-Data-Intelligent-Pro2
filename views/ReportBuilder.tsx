@@ -261,7 +261,7 @@ const ElementContent: React.FC<{ el: ReportElement, project: Project, data: RawR
                 display: 'flex',
                 flexDirection: 'column',
                 // Use Flex alignment to emulate PPT Text Alignment
-                justifyContent: 'flex-start', 
+                justifyContent: 'flex-start',
                 alignItems: el.style?.textAlign === 'center' ? 'center' : el.style?.textAlign === 'right' ? 'flex-end' : 'flex-start',
                 fontSize: el.style?.fontSize,
                 fontFamily: el.style?.fontFamily,
@@ -273,7 +273,8 @@ const ElementContent: React.FC<{ el: ReportElement, project: Project, data: RawR
                 backgroundColor: el.style?.backgroundColor,
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',
-                padding: '2px', // Slight padding to prevent font clipping
+                lineHeight: '1.2', // Prevent text overflow
+                padding: '4px', // Slight padding to prevent font clipping
             }}>
                  {el.content}
             </div>
@@ -708,9 +709,8 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
 
         const zip = await window.JSZip.loadAsync(file);
         
-        // 1. GET PRESENTATION SIZE
-        let scaleX = 1;
-        let scaleY = 1;
+        // 1. GET PRESENTATION SIZE - Use UNIFORM SCALE to prevent distortion
+        let scale = 1;
         const presentationXml = await zip.file("ppt/presentation.xml")?.async("string");
         if (presentationXml) {
              const parser = new DOMParser();
@@ -722,8 +722,10 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
                  const pptWidthPx = emuToPx(cx);
                  const pptHeightPx = emuToPx(cy);
                  if (pptWidthPx > 0 && pptHeightPx > 0) {
-                     scaleX = CANVAS_WIDTH / pptWidthPx;
-                     scaleY = CANVAS_HEIGHT / pptHeightPx;
+                     // Use MINIMUM scale to ensure everything fits within canvas (letterbox if needed)
+                     const scaleX = CANVAS_WIDTH / pptWidthPx;
+                     const scaleY = CANVAS_HEIGHT / pptHeightPx;
+                     scale = Math.min(scaleX, scaleY);
                  }
              }
         }
@@ -817,12 +819,18 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
                    finalW = w * scaleW;
                    finalH = h * scaleH;
                 } else {
-                   // Top Level
-                   finalX = x * scaleX;
-                   finalY = y * scaleY;
-                   finalW = w * scaleX;
-                   finalH = h * scaleY;
+                   // Top Level - Use uniform scale
+                   finalX = x * scale;
+                   finalY = y * scale;
+                   finalW = w * scale;
+                   finalH = h * scale;
                 }
+
+                // BOUNDS CHECKING - Clamp to canvas boundaries
+                finalX = Math.max(0, Math.min(finalX, CANVAS_WIDTH));
+                finalY = Math.max(0, Math.min(finalY, CANVAS_HEIGHT));
+                finalW = Math.max(1, Math.min(finalW, CANVAS_WIDTH - finalX));
+                finalH = Math.max(1, Math.min(finalH, CANVAS_HEIGHT - finalY));
 
                 accumulatedZIndex.val += 1;
                 const zIndex = accumulatedZIndex.val;
@@ -885,7 +893,7 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
                     const ln = spPr.getElementsByTagName("a:ln")[0];
                     const lnFill = ln?.getElementsByTagName("a:solidFill")[0];
                     const stroke = parsePptxColor(lnFill);
-                    const strokeW = ln ? (emuToPx(ln.getAttribute("w")) || 1) * scaleX : 0;
+                    const strokeW = ln ? (emuToPx(ln.getAttribute("w")) || 1) * scale : 0;
 
                     const prstGeom = spPr.getElementsByTagName("a:prstGeom")[0];
                     const geomType = prstGeom?.getAttribute("prst");
@@ -893,7 +901,7 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
                     if (txBody) {
                         const paragraphs = Array.from(txBody.getElementsByTagName("a:p"));
                         let fullText = "";
-                        let fontSize = 16 * scaleY;
+                        let fontSize = 16 * scale;
                         let fontColor = "#333333";
                         let isBold = false;
                         let align = 'left';
@@ -911,7 +919,7 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
                                 const rPr = runs[0].getElementsByTagName("a:rPr")[0];
                                 if (rPr) {
                                     const sz = rPr.getAttribute("sz");
-                                    if (sz) fontSize = (parseInt(sz) / 100) * scaleY;
+                                    if (sz) fontSize = (parseInt(sz) / 100) * scale;
                                     const solidFill = rPr.getElementsByTagName("a:solidFill")[0];
                                     const color = parsePptxColor(solidFill);
                                     if (color) fontColor = color;
@@ -998,7 +1006,34 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
 
             const parser = new DOMParser();
             const xmlDoc = parser.parseFromString(slideXmlStr, "text/xml");
-            
+
+            // Parse Slide Background
+            let slideBackground: string | undefined = undefined;
+            const bgElements = xmlDoc.getElementsByTagName("p:bg");
+            if (bgElements.length > 0) {
+                const bgFill = bgElements[0].getElementsByTagName("p:bgPr")[0];
+                if (bgFill) {
+                    const blipFill = bgFill.getElementsByTagName("a:blipFill")[0];
+                    if (blipFill) {
+                        const blip = blipFill.getElementsByTagName("a:blip")[0];
+                        const embedId = blip?.getAttribute("r:embed");
+                        if (embedId && relMap[embedId]) {
+                            let targetPath = relMap[embedId];
+                            if (targetPath.startsWith("..")) targetPath = targetPath.replace("..", "ppt");
+                            else targetPath = "ppt/slides/" + targetPath;
+
+                            const bgFile = zip.file(targetPath);
+                            if (bgFile) {
+                                const base64 = await bgFile.async("base64");
+                                const ext = targetPath.split('.').pop() || 'png';
+                                const mime = ext === 'jpg' ? 'jpeg' : ext;
+                                slideBackground = `data:image/${mime};base64,${base64}`;
+                            }
+                        }
+                    }
+                }
+            }
+
             const shapeTree = xmlDoc.getElementsByTagName("p:spTree")[0];
             if (shapeTree) {
                 const children = Array.from(shapeTree.childNodes).filter(n => n.nodeType === 1) as Element[];
@@ -1006,7 +1041,7 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
                 newSlides.push({
                     id: `slide-${Date.now()}-${newSlides.length}`,
                     elements,
-                    background: undefined 
+                    background: slideBackground
                 });
             }
         }
