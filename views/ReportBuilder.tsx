@@ -8,10 +8,10 @@ import {
     BringToFront, SendToBack, PaintBucket,
     ChevronLeft, ChevronRight, BarChart3, PieChart, LineChart, Activity, Hash, Cloud, Table,
     Undo2, Redo2, Square, Circle, Triangle, ArrowRight, Minus, Star, Highlighter, Copy, Move, RotateCw, Image as ImageIcon,
-    FileText, Settings, Presentation, PanelRightClose, PanelRightOpen, FileInput
+    FileText, Settings, Presentation, PanelRightClose, PanelRightOpen, FileInput, X
 } from 'lucide-react';
 import { saveProject } from '../utils/storage';
-import { generateCustomReport } from '../utils/report';
+import { generateCustomReport, validateSlidesForPptx } from '../utils/report';
 import { applyTransformation } from '../utils/transform';
 import { ResponsiveContainer, BarChart, Bar, PieChart as RePieChart, Pie, Cell, LineChart as ReLineChart, Line, AreaChart as ReAreaChart, Area, CartesianGrid, XAxis, YAxis } from 'recharts';
 import { useToast } from '../components/ToastProvider';
@@ -27,6 +27,7 @@ const CANVAS_HEIGHT = 540; // 16:9 Aspect Ratio
 const SNAP_GRID = 10;
 const CANVAS_BG = "#f3f4f6"; // Lighter background to make white canvas pop
 const DRAG_ACTIVATION_DISTANCE = 2; // Require slight movement to start drag
+const GUIDE_SNAP_THRESHOLD = 4;
 
 const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#6366F1', '#84cc16', '#14b8a6'];
 
@@ -464,6 +465,11 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
 
   const [activeMenu, setActiveMenu] = useState<string | null>(null); // For Top Bar Menus
   const [isProcessingPptx, setIsProcessingPptx] = useState(false);
+  const [isExportPreviewOpen, setIsExportPreviewOpen] = useState(false);
+  const [previewSlideIdx, setPreviewSlideIdx] = useState(0);
+  const [preflightIssues, setPreflightIssues] = useState<string[]>([]);
+  const [isExporting, setIsExporting] = useState(false);
+  const [guides, setGuides] = useState<{ vertical?: number; horizontal?: number }>({});
   
   const canvasRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -761,8 +767,64 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
           const slide = newSlides[activeSlideIdx];
 
           if (mode === 'drag') {
-              const deltaX = deltaXRaw;
-              const deltaY = deltaYRaw;
+              const selectedInitials = Object.keys(initialElements).map(id => initialElements[id]);
+              if (selectedInitials.length === 0) return;
+
+              const selectionBox = selectedInitials.reduce((box, el) => ({
+                  minX: Math.min(box.minX, el.x),
+                  minY: Math.min(box.minY, el.y),
+                  maxX: Math.max(box.maxX, el.x + el.w),
+                  maxY: Math.max(box.maxY, el.y + el.h),
+              }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
+
+              let deltaX = deltaXRaw;
+              let deltaY = deltaYRaw;
+              const nextGuides: { vertical?: number; horizontal?: number } = {};
+
+              const selectionWidth = selectionBox.maxX - selectionBox.minX;
+              const selectionHeight = selectionBox.maxY - selectionBox.minY;
+
+              const checkSnap = (target: number, current: number, axis: 'x' | 'y') => {
+                  const diff = target - current;
+                  if (Math.abs(diff) <= GUIDE_SNAP_THRESHOLD) {
+                      if (axis === 'x') {
+                          deltaX += diff;
+                          nextGuides.vertical = target;
+                      } else {
+                          deltaY += diff;
+                          nextGuides.horizontal = target;
+                      }
+                  }
+              };
+
+              const others = slide.elements.filter(el => !initialElements[el.id]);
+
+              const selectionLeft = selectionBox.minX + deltaX;
+              const selectionRight = selectionBox.minX + selectionWidth + deltaX;
+              const selectionCenterX = selectionBox.minX + selectionWidth / 2 + deltaX;
+              const selectionTop = selectionBox.minY + deltaY;
+              const selectionBottom = selectionBox.minY + selectionHeight + deltaY;
+              const selectionCenterY = selectionBox.minY + selectionHeight / 2 + deltaY;
+
+              const snapTargetsX: number[] = [CANVAS_WIDTH / 2];
+              const snapTargetsY: number[] = [CANVAS_HEIGHT / 2];
+
+              others.forEach(other => {
+                  snapTargetsX.push(other.x, other.x + other.w / 2, other.x + other.w);
+                  snapTargetsY.push(other.y, other.y + other.h / 2, other.y + other.h);
+              });
+
+              snapTargetsX.forEach(target => {
+                  checkSnap(target, selectionLeft, 'x');
+                  checkSnap(target, selectionCenterX, 'x');
+                  checkSnap(target, selectionRight, 'x');
+              });
+
+              snapTargetsY.forEach(target => {
+                  checkSnap(target, selectionTop, 'y');
+                  checkSnap(target, selectionCenterY, 'y');
+                  checkSnap(target, selectionBottom, 'y');
+              });
 
               slide.elements = slide.elements.map(el => {
                   if (initialElements[el.id]) {
@@ -777,6 +839,8 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
                   }
                   return el;
               });
+
+              setGuides(nextGuides);
           } else if (mode === 'resize') {
               const id = Object.keys(initialElements)[0];
               const init = initialElements[id];
@@ -818,11 +882,13 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
              const rect = canvasRef.current.getBoundingClientRect();
              const elCenterX = (init.x + init.w/2) * scale + rect.left;
              const elCenterY = (init.y + init.h/2) * scale + rect.top;
-             
+
              const angle = Math.atan2(e.clientY - elCenterY, e.clientX - elCenterX) * (180 / Math.PI);
              const rotation = (angle + 90) % 360;
-             
+
              slide.elements[elIdx].style = { ...slide.elements[elIdx].style, rotation };
+          } else {
+              setGuides({});
           }
 
           setSlides(newSlides);
@@ -833,6 +899,7 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
           dragRef.current.active = false;
           dragRef.current.pointerDown = false;
           dragRef.current.dragStarted = false;
+          setGuides({});
           if (wasDragging) {
               saveToHistory(slides); // Save state after drag end
           }
@@ -1399,13 +1466,29 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
   };
 
   const handleExport = async () => {
+      const issues = await validateSlidesForPptx(slides);
+      setPreflightIssues(issues);
+      setPreviewSlideIdx(0);
+      setIsExportPreviewOpen(true);
+
+      if (issues.length) {
+          showToast("Export Check", "โปรดแก้ไขข้อผิดพลาดก่อนส่งออก (ดูรายละเอียดใน Preview)", "warning");
+      }
+  };
+
+  const performExport = async () => {
+      setIsExporting(true);
       showToast("Exporting...", "Generating PowerPoint file...", "info");
       try {
           await generateCustomReport(project, slides, CANVAS_WIDTH, CANVAS_HEIGHT);
           showToast("Export Complete", "Download started.", "success");
+          setIsExportPreviewOpen(false);
       } catch (err: any) {
           console.error('Export failed', err);
-          showToast("Export Failed", err?.message || "Unable to generate PPTX.", "error");
+          const message = err?.issues?.[0] || err?.message || "Unable to generate PPTX.";
+          showToast("Export Failed", message, "error");
+      } finally {
+          setIsExporting(false);
       }
   };
 
@@ -1474,6 +1557,82 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
 
   return (
     <div className="flex flex-col h-full bg-gray-100 font-sans" onClick={() => setActiveMenu(null)}>
+
+      {/* Export Preview Modal */}
+      {isExportPreviewOpen && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[200] flex items-center justify-center p-6" onClick={() => setIsExportPreviewOpen(false)}>
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+                      <div>
+                          <div className="text-sm font-semibold text-gray-800">Export Preview</div>
+                          <div className="text-xs text-gray-500">ตรวจสอบสไลด์ก่อนส่งออก PPTX</div>
+                      </div>
+                      <button onClick={() => setIsExportPreviewOpen(false)} className="p-2 text-gray-500 hover:bg-gray-100 rounded-full">
+                          <X className="w-4 h-4" />
+                      </button>
+                  </div>
+
+                  <div className="flex flex-1 overflow-hidden">
+                      <div className="flex-1 p-4 overflow-y-auto bg-gray-50/50">
+                          {slides.length > 0 ? (
+                              <div className="bg-white rounded-lg shadow border border-gray-200 p-4 flex flex-col items-center">
+                                  <div className="relative bg-gray-100 border border-gray-200 rounded w-full flex items-center justify-center">
+                                      <div className="origin-top-left" style={{ transform: 'scale(0.7)', width: CANVAS_WIDTH, height: CANVAS_HEIGHT }}>
+                                          <ExportSlideView slide={slides[previewSlideIdx]} project={project} data={finalData} />
+                                      </div>
+                                  </div>
+                                  <div className="flex items-center justify-between w-full mt-3 text-xs text-gray-600">
+                                      <button
+                                        className="px-3 py-1 border border-gray-200 rounded bg-white hover:bg-gray-50 disabled:opacity-50"
+                                        onClick={() => setPreviewSlideIdx(Math.max(0, previewSlideIdx - 1))}
+                                        disabled={previewSlideIdx === 0}
+                                      >Prev</button>
+                                      <div>Slide {previewSlideIdx + 1} / {slides.length}</div>
+                                      <button
+                                        className="px-3 py-1 border border-gray-200 rounded bg-white hover:bg-gray-50 disabled:opacity-50"
+                                        onClick={() => setPreviewSlideIdx(Math.min(slides.length - 1, previewSlideIdx + 1))}
+                                        disabled={previewSlideIdx === slides.length - 1}
+                                      >Next</button>
+                                  </div>
+                              </div>
+                          ) : (
+                              <div className="h-full flex items-center justify-center text-sm text-gray-500">No slides available</div>
+                          )}
+                      </div>
+
+                      <div className="w-80 border-l border-gray-100 bg-white p-4 space-y-3 overflow-y-auto">
+                          <div className="text-sm font-semibold text-gray-800 flex items-center space-x-2">
+                              <span>Preflight Checklist</span>
+                          </div>
+                          <div className={`p-3 rounded border text-xs ${preflightIssues.length ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-green-200 bg-green-50 text-green-700'}`}>
+                              {preflightIssues.length ? (
+                                  <ul className="list-disc list-inside space-y-1">
+                                      {preflightIssues.map((issue, idx) => <li key={idx}>{issue}</li>)}
+                                  </ul>
+                              ) : (
+                                  <div>พร้อมส่งออก ไม่มีปัญหาตรวจพบ</div>
+                              )}
+                          </div>
+                          <div className="text-[11px] text-gray-500 leading-relaxed">
+                              โหมดส่งออก: PPTX แก้ไขได้เต็มรูปแบบ (Text/Image/Shape/Table/Chart)
+                          </div>
+                      </div>
+                  </div>
+
+                  <div className="px-5 py-3 border-t border-gray-100 bg-gray-50 flex items-center justify-between">
+                      <div className="text-xs text-gray-500">ระบบจะบล็อกการส่งออกถ้ามีปัญหา critical (ภาพหาย, ขนาด 0)</div>
+                      <div className="flex items-center space-x-2">
+                          <button onClick={() => setIsExportPreviewOpen(false)} className="px-3 py-1.5 rounded border border-gray-200 text-gray-600 bg-white hover:bg-gray-100">ยกเลิก</button>
+                          <button
+                            onClick={performExport}
+                            disabled={preflightIssues.length > 0 || isExporting}
+                            className={`px-4 py-1.5 rounded text-white text-sm font-semibold shadow-sm ${preflightIssues.length > 0 || isExporting ? 'bg-blue-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
+                          >{isExporting ? 'Exporting...' : 'Export PPTX'}</button>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
       
       {/* 1. Main Toolbar (Google Slides style) */}
       <div className="bg-white border-b border-gray-200 flex flex-col z-20 shadow-sm flex-shrink-0" ref={menuRef}>
@@ -1747,7 +1906,21 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
                         style={{
                             backgroundImage: `linear-gradient(#e5e7eb 1px, transparent 1px), linear-gradient(90deg, #e5e7eb 1px, transparent 1px)`,
                             backgroundSize: `${SNAP_GRID*2}px ${SNAP_GRID*2}px`
-                        }} 
+                        }}
+                      />
+                  )}
+
+                  {/* Snap Guides */}
+                  {guides.vertical !== undefined && (
+                      <div
+                        className="absolute top-0 bottom-0 w-px bg-blue-400/60 pointer-events-none"
+                        style={{ left: guides.vertical, zIndex: 999 }}
+                      />
+                  )}
+                  {guides.horizontal !== undefined && (
+                      <div
+                        className="absolute left-0 right-0 h-px bg-blue-400/60 pointer-events-none"
+                        style={{ top: guides.horizontal, zIndex: 999 }}
                       />
                   )}
 

@@ -154,16 +154,7 @@ const addTableToSlide = (
     });
 };
 
-const ensurePptxExportReady = async (slides: ReportSlide[]) => {
-    if (!window.PptxGenJS) {
-        throw new Error("Export libraries not loaded. Refresh and try again.");
-    }
-
-    if (!slides.length) {
-        throw new Error("No slides to export.");
-    }
-
-    // Wait for custom fonts to finish loading to avoid blank text boxes
+const waitForFonts = async () => {
     if (typeof document !== 'undefined' && (document as any).fonts?.ready) {
         try {
             await (document as any).fonts.ready;
@@ -171,21 +162,90 @@ const ensurePptxExportReady = async (slides: ReportSlide[]) => {
             console.warn("Font loading wait failed", err);
         }
     }
+};
 
-    const missingAssets: string[] = [];
-    slides.forEach((slide, sIdx) => {
-        slide.elements.forEach((el, eIdx) => {
-            if (el.type === 'image' && !el.content) {
-                missingAssets.push(`Slide ${sIdx + 1} element ${eIdx + 1} missing image data`);
-            }
-            if (el.w <= 0 || el.h <= 0) {
-                missingAssets.push(`Slide ${sIdx + 1} element ${eIdx + 1} has invalid dimensions`);
+const waitForImages = async (slides: ReportSlide[]) => {
+    const promises: Promise<void>[] = [];
+    slides.forEach(slide => {
+        if (slide.background?.startsWith('data:')) {
+            promises.push(new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => resolve();
+                img.onerror = () => reject(new Error('Background image failed to load'));
+                img.src = slide.background as string;
+            }));
+        }
+
+        slide.elements.forEach(el => {
+            if (el.type === 'image' && el.content) {
+                promises.push(new Promise((resolve, reject) => {
+                    const img = new Image();
+                    img.onload = () => resolve();
+                    img.onerror = () => reject(new Error('Element image failed to load'));
+                    img.src = el.content as string;
+                }));
             }
         });
     });
 
-    if (missingAssets.length) {
-        throw new Error(missingAssets[0]);
+    if (promises.length) {
+        try {
+            await Promise.all(promises);
+        } catch (err) {
+            console.warn('Image preload failed', err);
+        }
+    }
+};
+
+export const validateSlidesForPptx = async (slides: ReportSlide[]) => {
+    const issues: string[] = [];
+
+    if (!window.PptxGenJS) {
+        issues.push("Export libraries not loaded. Refresh and try again.");
+    }
+
+    if (!slides.length) {
+        issues.push("No slides to export.");
+    }
+
+    let hasContent = false;
+
+    slides.forEach((slide, sIdx) => {
+        if (slide.elements.length > 0 || slide.background) hasContent = true;
+        else issues.push(`Slide ${sIdx + 1} is empty. Add content or a background before exporting.`);
+
+        slide.elements.forEach((el, eIdx) => {
+            if (el.type === 'image' && !el.content) {
+                issues.push(`Slide ${sIdx + 1} element ${eIdx + 1} missing image data`);
+            }
+            if (el.w <= 0 || el.h <= 0) {
+                issues.push(`Slide ${sIdx + 1} element ${eIdx + 1} has invalid dimensions`);
+            }
+            if (el.type === 'table' && (!el.tableData || el.tableData.rows.length === 0)) {
+                issues.push(`Slide ${sIdx + 1} table ${eIdx + 1} is empty`);
+            }
+            if (el.type === 'chart' && (!el.chartData || !el.chartData.data || el.chartData.data.length === 0)) {
+                issues.push(`Slide ${sIdx + 1} chart ${eIdx + 1} has no data`);
+            }
+        });
+    });
+
+    if (!hasContent) {
+        issues.push("All slides are empty. Add elements before exporting.");
+    }
+
+    await waitForFonts();
+    await waitForImages(slides);
+
+    return issues;
+};
+
+const ensurePptxExportReady = async (slides: ReportSlide[]) => {
+    const issues = await validateSlidesForPptx(slides);
+    if (issues.length) {
+        const err: any = new Error(issues.join('\n'));
+        err.issues = issues;
+        throw err;
     }
 };
 
