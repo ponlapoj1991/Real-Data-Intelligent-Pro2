@@ -1,0 +1,202 @@
+
+
+export enum AppView {
+  LANDING = 'LANDING',
+  PROJECT = 'PROJECT',
+}
+
+export enum ProjectTab {
+  UPLOAD = 'UPLOAD',
+  PREP = 'PREP',
+  VISUALIZE = 'VISUALIZE',
+  REPORT = 'REPORT',
+  AI_AGENT = 'AI_AGENT',
+  SETTINGS = 'SETTINGS', // New Tab
+}
+
+export enum AIProvider {
+  GEMINI = 'GEMINI',
+  OPENAI = 'OPENAI',
+  CLAUDE = 'CLAUDE'
+}
+
+export interface AISettings {
+  provider: AIProvider;
+  apiKey: string;
+  model: string;
+  temperature: number;
+  maxTokens: number;
+}
+
+export interface AIPresets {
+  ask: string[];
+  action: string[];
+}
+
+// --- Toast Types ---
+export type ToastType = 'success' | 'error' | 'info' | 'warning';
+
+export interface ToastMessage {
+  id: string;
+  type: ToastType;
+  title: string;
+  message?: string;
+}
+
+export interface ToastContextType {
+  showToast: (title: string, message?: string, type?: ToastType) => void;
+}
+
+export type CellValue = string | number | boolean | null;
+
+export interface RawRow {
+  [key: string]: CellValue;
+}
+
+export interface ColumnConfig {
+  key: string;
+  type: 'string' | 'number' | 'date' | 'tag_array' | 'sentiment' | 'channel';
+  visible: boolean;
+  label?: string;
+}
+
+// --- New Transformation Types ---
+
+export type TransformMethod = 
+  | 'copy'              // Direct copy
+  | 'array_count'       // Count items in array string
+  | 'array_join'        // Join items "A, B"
+  | 'array_extract'     // Extract specific item (e.g., Index 0)
+  | 'array_includes'    // Boolean if contains X
+  | 'date_extract'      // Extract specific date part (Date only, Time only, Year, Month)
+  | 'date_format';      // Re-format date
+
+export interface TransformationRule {
+  id: string;
+  targetName: string;   // Name of the new column
+  sourceKey: string;    // Key from RawRow
+  method: TransformMethod;
+  params?: any;         // e.g. { delimiter: ',', index: 0, keyword: 'Service', datePart: 'date' }
+  valueMap?: Record<string, string>; // New: Map result values to new labels (e.g. 'isComment' -> 'Comment')
+}
+
+// --- Dashboard & Widget Types (Phase 2 & 3 & 4) ---
+
+export type ChartType = 'bar' | 'line' | 'pie' | 'area' | 'kpi' | 'wordcloud' | 'table';
+export type AggregateMethod = 'count' | 'sum' | 'avg';
+
+export interface DashboardFilter {
+  id: string;
+  column: string;
+  value: string;
+}
+
+export interface DashboardWidget {
+  id: string;
+  title: string;
+  type: ChartType;
+  
+  // Data Configuration
+  dimension: string;      // X-Axis (Group By) or Text Col for Wordcloud/Table
+  stackBy?: string;       // New: For Stacked Bar Charts (e.g. Stack by Sentiment)
+  measure: AggregateMethod; // Method e.g., "Count"
+  measureCol?: string;    // Y-Axis (Value) or Sort By for Table
+  limit?: number;         // Limit rows (Top 10, 20, etc)
+  
+  // Visuals
+  color?: string;
+  width: 'half' | 'full'; // Grid span
+}
+
+export interface DrillDownState {
+  isOpen: boolean;
+  title: string;
+  filterCol: string;
+  filterVal: string;
+  data: RawRow[];
+}
+
+// --- Report Builder Types (Phase 5) ---
+
+export type ShapeType = 'rect' | 'circle' | 'triangle' | 'line' | 'arrow' | 'star';
+export type ElementType = 'widget' | 'text' | 'image' | 'shape';
+
+export interface ReportElementStyle {
+  // Typography
+  fontSize?: string;
+  fontFamily?: string;
+  fontWeight?: string;
+  fontStyle?: string;
+  textDecoration?: string;
+  textAlign?: 'left' | 'center' | 'right' | 'justify';
+  color?: string; // Text color
+  
+  // Appearance
+  backgroundColor?: string;
+  fill?: string; // Shape fill
+  stroke?: string; // Border color
+  strokeWidth?: number;
+  opacity?: number;
+  rotation?: number;
+  shadow?: boolean;
+}
+
+export interface ReportElement {
+  id: string;
+  type: ElementType; 
+  shapeType?: ShapeType; // Only if type === 'shape'
+  widgetId?: string;     // Only if type === 'widget'
+  content?: string;      // Text content or Image Base64
+  style?: ReportElementStyle;
+  
+  // Positioning
+  x: number; 
+  y: number;
+  w: number;
+  h: number;
+  zIndex?: number;
+}
+
+export interface ReportSlide {
+  id: string;
+  background?: string; // Hex or Base64
+  elements: ReportElement[];
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  description: string;
+  lastModified: number;
+  data: RawRow[];          // Original Raw Data
+  columns: ColumnConfig[]; // Config for Raw Data
+  
+  transformRules?: TransformationRule[];
+  dashboard?: DashboardWidget[]; // Saved Dashboard Config
+  
+  reportConfig?: ReportSlide[]; // Saved Report Builder Config
+  
+  aiSettings?: AISettings; // New: Per-project AI Settings
+  aiPresets?: AIPresets; // New: Saved Prompt Presets
+}
+
+// Interface for the globally available XLSX object from CDN
+export interface XLSXLibrary {
+  read: (data: any, options?: any) => any;
+  utils: {
+    sheet_to_json: (worksheet: any, options?: any) => any[];
+    json_to_sheet: (data: any[]) => any;
+    book_new: () => any;
+    book_append_sheet: (workbook: any, worksheet: any, name: string) => void;
+  };
+  writeFile: (workbook: any, filename: string) => void;
+}
+
+declare global {
+  interface Window {
+    XLSX: XLSXLibrary;
+    html2canvas: any;
+    PptxGenJS: any;
+    JSZip: any;
+  }
+}
