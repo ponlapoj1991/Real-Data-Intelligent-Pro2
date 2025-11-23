@@ -183,7 +183,7 @@ export interface ReportElement {
 
 export interface ReportSlide {
   id: string;
-  background?: string; // Hex or Base64
+  background?: string; // Hex color or Base64 image
   elements: ReportElement[];
 }
 

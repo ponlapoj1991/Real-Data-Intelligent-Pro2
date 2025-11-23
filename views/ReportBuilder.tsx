@@ -216,7 +216,7 @@ const SlideThumbnail: React.FC<{ slide: ReportSlide, project: Project, data: Raw
                 height: '100%', 
             }}
         >
-            <div 
+            <div
                 style={{
                     width: CANVAS_WIDTH,
                     height: CANVAS_HEIGHT,
@@ -225,10 +225,10 @@ const SlideThumbnail: React.FC<{ slide: ReportSlide, project: Project, data: Raw
                     position: 'absolute',
                     top: 0,
                     left: 0,
-                    backgroundColor: slide.background ? 'transparent' : 'white'
+                    backgroundColor: slide.background && !slide.background.startsWith('data:image') ? slide.background : 'white'
                 }}
             >
-                {slide.background && <img src={slide.background} className="absolute inset-0 w-full h-full object-cover" />}
+                {slide.background?.startsWith('data:image') && <img src={slide.background} className="absolute inset-0 w-full h-full object-cover" />}
                 {slide.elements.map(el => (
                     <div 
                         key={el.id}
@@ -255,11 +255,13 @@ const ExportSlideView: React.FC<{ slide: ReportSlide, project: Project, data: Ra
                 width: CANVAS_WIDTH,
                 height: CANVAS_HEIGHT,
                 position: 'relative',
-                backgroundColor: slide.background ? 'transparent' : 'white',
+                backgroundColor: slide.background && !slide.background.startsWith('data:image') ? slide.background : 'white',
                 overflow: 'hidden'
             }}
         >
-            {slide.background && <img src={slide.background} className="absolute inset-0 w-full h-full object-cover" />}
+            {slide.background?.startsWith('data:image') && (
+                <img src={slide.background} className="absolute inset-0 w-full h-full object-cover" />
+            )}
             {slide.elements.map(el => (
                 <div
                     key={el.id}
@@ -894,6 +896,12 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
             if (bgElements.length > 0) {
                 const bgFill = bgElements[0].getElementsByTagName("p:bgPr")[0];
                 if (bgFill) {
+                    // Solid color background
+                    const solidFill = bgFill.getElementsByTagName("a:solidFill")[0];
+                    const colorFill = parsePptxColor(solidFill);
+                    if (colorFill) return colorFill;
+
+                    // Image background
                     const blipFill = bgFill.getElementsByTagName("a:blipFill")[0];
                     if (blipFill) {
                         const blip = blipFill.getElementsByTagName("a:blip")[0];
@@ -1388,20 +1396,20 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
           const root = createRoot(container);
           root.render(<ExportSlideView slide={slideData} project={project} data={finalData} />);
 
-          // Wait for next frame to ensure render is committed
+          // Wait for render + font loading to reduce blank captures
+          await document.fonts?.ready.catch(() => Promise.resolve());
           await new Promise(resolve => requestAnimationFrame(() => resolve(null)));
 
           try {
               const canvas = await window.html2canvas(container, { scale: 2, useCORS: true, backgroundColor: null });
               const dataUrl = canvas.toDataURL('image/png');
-              root.unmount();
-              document.body.removeChild(container);
               return dataUrl;
           } catch (err) {
               console.error('Slide render failed', err);
+              return null;
+          } finally {
               root.unmount();
               document.body.removeChild(container);
-              return null;
           }
       };
 
@@ -1727,20 +1735,24 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
             className="flex-1 bg-gray-200 overflow-auto relative flex items-center justify-center p-10 custom-scrollbar" 
             onMouseDown={handleStageMouseDown}
           >
-              <div 
-                  className="bg-white shadow-2xl relative transition-transform duration-200 ease-linear origin-center"
+              <div
+                  className="bg-white shadow-2xl relative transition-transform duration-200 ease-linear origin-center overflow-hidden"
                   style={{
                       width: CANVAS_WIDTH,
                       height: CANVAS_HEIGHT,
-                      transform: `scale(${zoomLevel})`
+                      transform: `scale(${zoomLevel})`,
+                      backgroundColor: activeSlide.background && !activeSlide.background.startsWith('data:image') ? activeSlide.background : 'white'
                   }}
                   ref={canvasRef}
               >
+                  {activeSlide.background?.startsWith('data:image') && (
+                      <img src={activeSlide.background} className="absolute inset-0 w-full h-full object-cover" style={{ zIndex: 0 }} />
+                  )}
                   {/* Grid - Only show if enabled */}
                   {showGrid && (
-                      <div 
-                        className="absolute inset-0 pointer-events-none z-0" 
-                        style={{ 
+                      <div
+                        className="absolute inset-0 pointer-events-none z-0"
+                        style={{
                             backgroundImage: `linear-gradient(#e5e7eb 1px, transparent 1px), linear-gradient(90deg, #e5e7eb 1px, transparent 1px)`,
                             backgroundSize: `${SNAP_GRID*2}px ${SNAP_GRID*2}px`
                         }} 
