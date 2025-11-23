@@ -100,10 +100,11 @@ export const generatePowerPoint = async (project: Project, dashboardElement: HTM
 
 // Phase 5: Custom Report Generation from Canvas
 export const generateCustomReport = async (
-  project: Project, 
-  slides: ReportSlide[], 
-  canvasWidth: number, 
-  canvasHeight: number
+  project: Project,
+  slides: ReportSlide[],
+  canvasWidth: number,
+  canvasHeight: number,
+  renderSlide?: (slide: ReportSlide) => Promise<string | null>
 ) => {
   if (!window.PptxGenJS || !window.html2canvas) {
     alert("Export libraries not loaded.");
@@ -126,39 +127,45 @@ export const generateCustomReport = async (
           });
       }
 
-      // 2. Elements
-      // We need to find the actual DOM elements on the screen to capture them
-      // The ID convention in ReportBuilder is `element-{element.id}`
-      for (const el of slideData.elements) {
-          const domId = `element-${el.id}`;
-          const domEl = document.getElementById(domId);
+      // Prefer a consumer-provided renderer so every slide is captured even when not mounted
+      let slideImage: string | null = null;
+      if (renderSlide) {
+          slideImage = await renderSlide(slideData);
+      }
 
-          if (domEl) {
-              try {
-                  // If it's a chart or complex DOM element, snapshot it
-                  // For simple text, we could try to use native PPTX text, but canvas ensures fidelity
-                  const canvas = await window.html2canvas(domEl, {
-                      scale: 2,
-                      useCORS: true,
-                      backgroundColor: null // Transparent background
-                  });
-                  const imgData = canvas.toDataURL('image/png');
+      // Fallback to element-level capture when renderer is not available
+      if (slideImage) {
+          slide.addImage({ data: slideImage, x: 0, y: 0, w: PPT_WIDTH_INCH, h: PPT_HEIGHT_INCH });
+      } else {
+          for (const el of slideData.elements) {
+              const domId = `element-${el.id}`;
+              const domEl = document.getElementById(domId);
 
-                  const xPercent = el.x / canvasWidth;
-                  const yPercent = el.y / canvasHeight;
-                  const wPercent = el.w / canvasWidth;
-                  const hPercent = el.h / canvasHeight;
+              if (domEl) {
+                  try {
+                      const canvas = await window.html2canvas(domEl, {
+                          scale: 2,
+                          useCORS: true,
+                          backgroundColor: null // Transparent background
+                      });
+                      const imgData = canvas.toDataURL('image/png');
 
-                  slide.addImage({
-                      data: imgData,
-                      x: xPercent * PPT_WIDTH_INCH,
-                      y: yPercent * PPT_HEIGHT_INCH,
-                      w: wPercent * PPT_WIDTH_INCH,
-                      h: hPercent * PPT_HEIGHT_INCH
-                  });
+                      const xPercent = el.x / canvasWidth;
+                      const yPercent = el.y / canvasHeight;
+                      const wPercent = el.w / canvasWidth;
+                      const hPercent = el.h / canvasHeight;
 
-              } catch (e) {
-                  console.error("Failed to capture element", e);
+                      slide.addImage({
+                          data: imgData,
+                          x: xPercent * PPT_WIDTH_INCH,
+                          y: yPercent * PPT_HEIGHT_INCH,
+                          w: wPercent * PPT_WIDTH_INCH,
+                          h: hPercent * PPT_HEIGHT_INCH
+                      });
+
+                  } catch (e) {
+                      console.error("Failed to capture element", e);
+                  }
               }
           }
       }

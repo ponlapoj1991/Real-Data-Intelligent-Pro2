@@ -1,5 +1,6 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { createRoot } from 'react-dom/client';
 import { Project, ReportSlide, ReportElement, DashboardWidget, RawRow, ShapeType, ReportElementStyle, TableData, ChartData, TableCell } from '../types';
 import { 
     Plus, Trash2, Save, Download, Layers,
@@ -246,6 +247,36 @@ const SlideThumbnail: React.FC<{ slide: ReportSlide, project: Project, data: Raw
     );
 };
 
+// Static renderer used for exporting PPT slides without editor chrome
+const ExportSlideView: React.FC<{ slide: ReportSlide, project: Project, data: RawRow[] }> = ({ slide, project, data }) => {
+    return (
+        <div
+            style={{
+                width: CANVAS_WIDTH,
+                height: CANVAS_HEIGHT,
+                position: 'relative',
+                backgroundColor: slide.background ? 'transparent' : 'white',
+                overflow: 'hidden'
+            }}
+        >
+            {slide.background && <img src={slide.background} className="absolute inset-0 w-full h-full object-cover" />}
+            {slide.elements.map(el => (
+                <div
+                    key={el.id}
+                    style={{
+                        position: 'absolute',
+                        left: el.x, top: el.y, width: el.w, height: el.h,
+                        zIndex: el.zIndex,
+                        transform: `rotate(${el.style?.rotation || 0}deg)`
+                    }}
+                >
+                    <ElementContent el={el} project={project} data={data} />
+                </div>
+            ))}
+        </div>
+    );
+};
+
 // Extracted Content Renderer to share between Main Canvas and Thumbnail
 const ElementContent: React.FC<{ el: ReportElement, project: Project, data: RawRow[], simplified?: boolean }> = ({ el, project, data, simplified = false }) => {
     const commonStyle: React.CSSProperties = {
@@ -446,6 +477,7 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
     startY: number;
     initialElements: Record<string, { x: number, y: number, w: number, h: number, rotation?: number }>;
     dragOffset: { x: number, y: number };
+    pointerDown?: boolean;
   }>({
     active: false,
     mode: 'drag',
@@ -453,7 +485,8 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
     startX: 0,
     startY: 0,
     initialElements: {},
-    dragOffset: { x: 0, y: 0 }
+    dragOffset: { x: 0, y: 0 },
+    pointerDown: false
   });
 
   // History State
@@ -651,7 +684,8 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
           startX: e.clientX,
           startY: e.clientY,
           initialElements,
-          dragOffset: { x: (e.clientX - rect.left)/scale, y: (e.clientY - rect.top)/scale }
+          dragOffset: { x: (e.clientX - rect.left)/scale, y: (e.clientY - rect.top)/scale },
+          pointerDown: true
       };
   };
 
@@ -670,7 +704,8 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
           startX: e.clientX,
           startY: e.clientY,
           initialElements: { [id as string]: { ...el, rotation: el.style?.rotation || 0 } },
-          dragOffset: { x: 0, y: 0 }
+          dragOffset: { x: 0, y: 0 },
+          pointerDown: true
       };
   };
 
@@ -689,14 +724,19 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
           startX: e.clientX,
           startY: e.clientY,
           initialElements: { [id as string]: { ...el, rotation: el.style?.rotation || 0 } },
-          dragOffset: { x: 0, y: 0 }
+          dragOffset: { x: 0, y: 0 },
+          pointerDown: true
       };
   };
 
   // Global Mouse Move / Up
   useEffect(() => {
       const handleMouseMove = (e: MouseEvent) => {
-          if (!dragRef.current.active || !canvasRef.current) return;
+          if (!dragRef.current.active || !canvasRef.current || !dragRef.current.pointerDown || e.buttons === 0) {
+              dragRef.current.active = false;
+              dragRef.current.pointerDown = false;
+              return;
+          }
           const { mode, startX, startY, initialElements, handle } = dragRef.current;
           const scale = zoomLevel;
           const newSlides = [...slides];
@@ -773,6 +813,7 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
       const handleMouseUp = () => {
           if (dragRef.current.active) {
               dragRef.current.active = false;
+              dragRef.current.pointerDown = false;
               saveToHistory(slides); // Save state after drag end
           }
       };
@@ -828,10 +869,55 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
 
         const newSlides: ReportSlide[] = [];
 
+        const parseRelMap = (relsXml?: string | null) => {
+            const relMap: Record<string, string> = {};
+            if (!relsXml) return relMap;
+            const relsDoc = new DOMParser().parseFromString(relsXml, "text/xml");
+            const rels = relsDoc.getElementsByTagName("Relationship");
+            for (let r = 0; r < rels.length; r++) {
+                const id = rels[r].getAttribute("Id");
+                const target = rels[r].getAttribute("Target");
+                if (id && target) relMap[id] = target;
+            }
+            return relMap;
+        };
+
+        const normalizeTarget = (targetPath: string, base: 'slide' | 'layout' | 'master') => {
+            if (targetPath.startsWith("..")) return targetPath.replace("..", "ppt");
+            if (base === 'slide') return `ppt/slides/${targetPath}`;
+            if (base === 'layout') return `ppt/slideLayouts/${targetPath}`;
+            return `ppt/slideMasters/${targetPath}`;
+        };
+
+        const extractBackground = async (xmlDoc: Document, relMap: Record<string, string>) => {
+            const bgElements = xmlDoc.getElementsByTagName("p:bg");
+            if (bgElements.length > 0) {
+                const bgFill = bgElements[0].getElementsByTagName("p:bgPr")[0];
+                if (bgFill) {
+                    const blipFill = bgFill.getElementsByTagName("a:blipFill")[0];
+                    if (blipFill) {
+                        const blip = blipFill.getElementsByTagName("a:blip")[0];
+                        const embedId = blip?.getAttribute("r:embed");
+                        if (embedId && relMap[embedId]) {
+                            const targetPath = normalizeTarget(relMap[embedId], 'slide');
+                            const bgFile = zip.file(targetPath);
+                            if (bgFile) {
+                                const base64 = await bgFile.async("base64");
+                                const ext = targetPath.split('.').pop() || 'png';
+                                const mime = ext === 'jpg' ? 'jpeg' : ext;
+                                return `data:image/${mime};base64,${base64}`;
+                            }
+                        }
+                    }
+                }
+            }
+            return undefined;
+        };
+
         // Async Recursive Function
         const traverseShapesAsync = async (
-            nodeList: Element[], 
-            relMap: Record<string, string>, 
+            nodeList: Element[],
+            relMap: Record<string, string>,
             groupFrame: GroupTransform | null,
             accumulatedZIndex: { val: number }
         ): Promise<ReportElement[]> => {
@@ -1096,6 +1182,7 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
                         let fontSize = 16 * scale;
                         let fontColor = "#333333";
                         let isBold = false;
+                        let fontFamily: string | undefined = undefined;
                         let align = 'left';
 
                         if (paragraphs.length > 0) {
@@ -1116,6 +1203,9 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
                                     const color = parsePptxColor(solidFill);
                                     if (color) fontColor = color;
                                     if (rPr.getAttribute("b") === "1") isBold = true;
+                                    const latin = rPr.getElementsByTagName("a:latin")[0];
+                                    const typeface = latin?.getAttribute("typeface");
+                                    if (typeface) fontFamily = typeface;
                                 }
                             }
                         }
@@ -1136,6 +1226,7 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
                                     color: fontColor,
                                     fontWeight: isBold ? 'bold' : 'normal',
                                     backgroundColor: bgCol,
+                                    fontFamily,
                                     textAlign: align as any,
                                     rotation: rot
                                 }
@@ -1177,6 +1268,18 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
             return elements;
         };
 
+        const extractElementsFromDoc = async (
+            xmlDoc: Document,
+            relMap: Record<string, string>,
+            zOffset: number
+        ) => {
+            const shapeTree = xmlDoc.getElementsByTagName("p:spTree")[0];
+            if (!shapeTree) return [] as ReportElement[];
+            const children = Array.from(shapeTree.childNodes).filter(n => n.nodeType === 1) as Element[];
+            const elements = await traverseShapesAsync(children, relMap, null, { val: zOffset });
+            return elements;
+        };
+
         for (const fileName of slideFiles) {
             const slideXmlStr = await zip.file(fileName)?.async("string");
             if (!slideXmlStr) continue;
@@ -1184,55 +1287,61 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
             const slideNum = fileName.match(/slide(\d+)\.xml/)![1];
             const relsName = `ppt/slides/_rels/slide${slideNum}.xml.rels`;
             const relsXmlStr = await zip.file(relsName)?.async("string");
-
-            const relMap: Record<string, string> = {};
-            if (relsXmlStr) {
-                const relsDoc = new DOMParser().parseFromString(relsXmlStr, "text/xml");
-                const rels = relsDoc.getElementsByTagName("Relationship");
-                for (let r = 0; r < rels.length; r++) {
-                    const id = rels[r].getAttribute("Id");
-                    const target = rels[r].getAttribute("Target");
-                    if (id && target) relMap[id] = target;
-                }
-            }
-
+            const relMap = parseRelMap(relsXmlStr);
             const parser = new DOMParser();
             const xmlDoc = parser.parseFromString(slideXmlStr, "text/xml");
 
-            // Parse Slide Background
-            let slideBackground: string | undefined = undefined;
-            const bgElements = xmlDoc.getElementsByTagName("p:bg");
-            if (bgElements.length > 0) {
-                const bgFill = bgElements[0].getElementsByTagName("p:bgPr")[0];
-                if (bgFill) {
-                    const blipFill = bgFill.getElementsByTagName("a:blipFill")[0];
-                    if (blipFill) {
-                        const blip = blipFill.getElementsByTagName("a:blip")[0];
-                        const embedId = blip?.getAttribute("r:embed");
-                        if (embedId && relMap[embedId]) {
-                            let targetPath = relMap[embedId];
-                            if (targetPath.startsWith("..")) targetPath = targetPath.replace("..", "ppt");
-                            else targetPath = "ppt/slides/" + targetPath;
+            // Layout + Master
+            const relsDoc = relsXmlStr ? new DOMParser().parseFromString(relsXmlStr, "text/xml") : null;
+            const layoutRel = relsDoc?.querySelector("Relationship[Type$='slideLayout']");
+            const layoutTarget = layoutRel ? normalizeTarget(layoutRel.getAttribute("Target") || '', 'layout') : null;
 
-                            const bgFile = zip.file(targetPath);
-                            if (bgFile) {
-                                const base64 = await bgFile.async("base64");
-                                const ext = targetPath.split('.').pop() || 'png';
-                                const mime = ext === 'jpg' ? 'jpeg' : ext;
-                                slideBackground = `data:image/${mime};base64,${base64}`;
-                            }
-                        }
-                    }
+            const layoutXmlStr = layoutTarget ? await zip.file(layoutTarget)?.async("string") : null;
+            const layoutRelsStr = layoutTarget ? await zip.file(`${layoutTarget.replace('ppt/slideLayouts/', 'ppt/slideLayouts/_rels/')}.rels`)?.async("string") : null;
+            const layoutRelMap = parseRelMap(layoutRelsStr);
+
+            let masterXmlStr: string | null = null;
+            let masterRelMap: Record<string, string> = {};
+            if (layoutRelsStr) {
+                const layoutRelsDoc = new DOMParser().parseFromString(layoutRelsStr, "text/xml");
+                const masterRel = layoutRelsDoc.querySelector("Relationship[Type$='slideMaster']");
+                const masterTarget = masterRel ? normalizeTarget(masterRel.getAttribute("Target") || '', 'master') : null;
+                if (masterTarget) {
+                    masterXmlStr = await zip.file(masterTarget)?.async("string") || null;
+                    const masterRelsStr = await zip.file(`${masterTarget.replace('ppt/slideMasters/', 'ppt/slideMasters/_rels/')}.rels`)?.async("string");
+                    masterRelMap = parseRelMap(masterRelsStr);
                 }
             }
 
-            const shapeTree = xmlDoc.getElementsByTagName("p:spTree")[0];
-            if (shapeTree) {
-                const children = Array.from(shapeTree.childNodes).filter(n => n.nodeType === 1) as Element[];
-                const elements = await traverseShapesAsync(children, relMap, null, { val: 0 });
+            // Resolve Background Priority: slide -> layout -> master
+            let slideBackground = await extractBackground(xmlDoc, relMap);
+            if (!slideBackground && layoutXmlStr) {
+                slideBackground = await extractBackground(new DOMParser().parseFromString(layoutXmlStr, "text/xml"), layoutRelMap);
+            }
+            if (!slideBackground && masterXmlStr) {
+                slideBackground = await extractBackground(new DOMParser().parseFromString(masterXmlStr, "text/xml"), masterRelMap);
+            }
+
+            // Gather elements from master/layout/slide to keep brand assets
+            let aggregatedElements: ReportElement[] = [];
+            if (masterXmlStr) {
+                const masterDoc = new DOMParser().parseFromString(masterXmlStr, "text/xml");
+                aggregatedElements = aggregatedElements.concat(await extractElementsFromDoc(masterDoc, masterRelMap, aggregatedElements.length));
+            }
+            if (layoutXmlStr) {
+                const layoutDoc = new DOMParser().parseFromString(layoutXmlStr, "text/xml");
+                aggregatedElements = aggregatedElements.concat(await extractElementsFromDoc(layoutDoc, layoutRelMap, aggregatedElements.length));
+            }
+
+            const slideElements = await extractElementsFromDoc(xmlDoc, relMap, aggregatedElements.length);
+            aggregatedElements = aggregatedElements.concat(slideElements);
+
+            aggregatedElements = aggregatedElements.map((el, idx) => ({ ...el, zIndex: idx + 1 }));
+
+            if (aggregatedElements.length > 0 || slideBackground) {
                 newSlides.push({
                     id: `slide-${Date.now()}-${newSlides.length}`,
-                    elements,
+                    elements: aggregatedElements,
                     background: slideBackground
                 });
             }
@@ -1265,7 +1374,38 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
 
   const handleExport = async () => {
       showToast("Exporting...", "Generating PowerPoint file...", "info");
-      await generateCustomReport(project, slides, CANVAS_WIDTH, CANVAS_HEIGHT);
+      const renderSlide = async (slideData: ReportSlide) => {
+          if (!window.html2canvas) return null;
+          const container = document.createElement('div');
+          container.style.position = 'fixed';
+          container.style.left = '-20000px';
+          container.style.top = '0';
+          container.style.width = `${CANVAS_WIDTH}px`;
+          container.style.height = `${CANVAS_HEIGHT}px`;
+          container.style.pointerEvents = 'none';
+          document.body.appendChild(container);
+
+          const root = createRoot(container);
+          root.render(<ExportSlideView slide={slideData} project={project} data={finalData} />);
+
+          // Wait for next frame to ensure render is committed
+          await new Promise(resolve => requestAnimationFrame(() => resolve(null)));
+
+          try {
+              const canvas = await window.html2canvas(container, { scale: 2, useCORS: true, backgroundColor: null });
+              const dataUrl = canvas.toDataURL('image/png');
+              root.unmount();
+              document.body.removeChild(container);
+              return dataUrl;
+          } catch (err) {
+              console.error('Slide render failed', err);
+              root.unmount();
+              document.body.removeChild(container);
+              return null;
+          }
+      };
+
+      await generateCustomReport(project, slides, CANVAS_WIDTH, CANVAS_HEIGHT, renderSlide);
       showToast("Export Complete", "Download started.", "success");
   };
 
