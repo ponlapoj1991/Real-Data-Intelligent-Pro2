@@ -1,6 +1,5 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { createRoot } from 'react-dom/client';
 import { Project, ReportSlide, ReportElement, DashboardWidget, RawRow, ShapeType, ReportElementStyle, TableData, ChartData, TableCell } from '../types';
 import { 
     Plus, Trash2, Save, Download, Layers,
@@ -29,20 +28,6 @@ const SNAP_GRID = 10;
 const CANVAS_BG = "#f3f4f6"; // Lighter background to make white canvas pop
 
 const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#6366F1', '#84cc16', '#14b8a6'];
-
-// Ensure all images inside a container are fully loaded before rendering
-const waitForImages = async (container: HTMLElement) => {
-    const imgs = Array.from(container.querySelectorAll('img'));
-    if (imgs.length === 0) return;
-
-    await Promise.all(imgs.map(img => {
-        if (img.complete && img.naturalWidth !== 0) return Promise.resolve();
-        return new Promise<void>(resolve => {
-            img.onload = () => resolve();
-            img.onerror = () => resolve();
-        });
-    }));
-};
 
 // --- Helper Functions ---
 
@@ -1396,43 +1381,13 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
 
   const handleExport = async () => {
       showToast("Exporting...", "Generating PowerPoint file...", "info");
-      const renderSlide = async (slideData: ReportSlide) => {
-          if (!window.html2canvas) return null;
-          const container = document.createElement('div');
-          container.style.position = 'fixed';
-          container.style.left = '-20000px';
-          container.style.top = '0';
-          container.style.width = `${CANVAS_WIDTH}px`;
-          container.style.height = `${CANVAS_HEIGHT}px`;
-          container.style.pointerEvents = 'none';
-          document.body.appendChild(container);
-
-          const root = createRoot(container);
-          root.render(<ExportSlideView slide={slideData} project={project} data={finalData} />);
-
-          // Wait for render + font loading to reduce blank captures
-          await document.fonts?.ready.catch(() => Promise.resolve());
-          await new Promise(resolve => requestAnimationFrame(() => resolve(null)));
-          // Ensure images like logos/backgrounds are ready before capture
-          await waitForImages(container);
-          // One more RAF to allow late image paints to flush
-          await new Promise(resolve => requestAnimationFrame(() => resolve(null)));
-
-          try {
-              const canvas = await window.html2canvas(container, { scale: 2, useCORS: true, backgroundColor: null });
-              const dataUrl = canvas.toDataURL('image/png');
-              return dataUrl;
-          } catch (err) {
-              console.error('Slide render failed', err);
-              return null;
-          } finally {
-              root.unmount();
-              document.body.removeChild(container);
-          }
-      };
-
-      await generateCustomReport(project, slides, CANVAS_WIDTH, CANVAS_HEIGHT, renderSlide);
-      showToast("Export Complete", "Download started.", "success");
+      try {
+          await generateCustomReport(project, slides, CANVAS_WIDTH, CANVAS_HEIGHT);
+          showToast("Export Complete", "Download started.", "success");
+      } catch (err: any) {
+          console.error('Export failed', err);
+          showToast("Export Failed", err?.message || "Unable to generate PPTX.", "error");
+      }
   };
 
   // --- Renderers ---
