@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Project, ReportSlide, ReportElement, DashboardWidget, RawRow, ShapeType, ReportElementStyle } from '../types';
+import { Project, ReportSlide, ReportElement, DashboardWidget, RawRow, ShapeType, ReportElementStyle, TableData, ChartData, TableCell } from '../types';
 import { 
     Plus, Trash2, Save, Download, Layers,
     Maximize, Monitor, Grid3X3, Type, FileUp, Loader2, MousePointer2,
@@ -321,6 +321,95 @@ const ElementContent: React.FC<{ el: ReportElement, project: Project, data: RawR
         } else {
             return <div className="w-full h-full bg-gray-100 flex items-center justify-center text-xs text-red-400">Missing</div>;
         }
+    } else if (el.type === 'table' && el.tableData) {
+        // Render Table
+        const { rows, columnWidths } = el.tableData;
+        return (
+            <div style={{...commonStyle, backgroundColor: '#fff', border: '1px solid #ccc'}}>
+                <table className="w-full h-full border-collapse" style={{fontSize: simplified ? '6px' : '8px'}}>
+                    <tbody>
+                        {rows.map((row, rIdx) => (
+                            <tr key={rIdx}>
+                                {row.map((cell, cIdx) => (
+                                    <td
+                                        key={cIdx}
+                                        rowSpan={cell.rowSpan}
+                                        colSpan={cell.colSpan}
+                                        style={{
+                                            border: '1px solid #ddd',
+                                            padding: '2px 4px',
+                                            backgroundColor: cell.style?.backgroundColor || 'transparent',
+                                            color: cell.style?.color || '#333',
+                                            fontWeight: cell.style?.fontWeight || 'normal',
+                                            textAlign: cell.style?.textAlign || 'left',
+                                            fontSize: cell.style?.fontSize,
+                                            width: columnWidths?.[cIdx] ? `${columnWidths[cIdx]}%` : 'auto',
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis',
+                                            whiteSpace: 'nowrap'
+                                        }}
+                                    >
+                                        {cell.text}
+                                    </td>
+                                ))}
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        );
+    } else if (el.type === 'chart' && el.chartData) {
+        // Render Embedded Chart
+        const { chartType, data: chartData, title } = el.chartData;
+        if (simplified) {
+            return <div className="w-full h-full bg-white border border-gray-200 flex items-center justify-center">
+                {chartType === 'bar' && <BarChart3 className="w-8 h-8 text-blue-400" />}
+                {chartType === 'pie' && <PieChart className="w-8 h-8 text-green-400" />}
+                {chartType === 'line' && <LineChart className="w-8 h-8 text-purple-400" />}
+                {chartType === 'area' && <Activity className="w-8 h-8 text-orange-400" />}
+            </div>;
+        }
+        return (
+            <div className="w-full h-full bg-white border border-gray-100 p-2 flex flex-col">
+                {title && <div className="text-[10px] font-bold text-gray-700 mb-1">{title}</div>}
+                <div className="flex-1">
+                    <ResponsiveContainer width="100%" height="100%">
+                        {chartType === 'bar' && (
+                            <BarChart data={chartData} margin={{top:5, left:0, right:5, bottom:0}}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                                <XAxis dataKey="name" tick={{fontSize: 8}} hide />
+                                <YAxis tick={{fontSize: 8}} hide />
+                                <Bar dataKey="value" fill="#3B82F6" isAnimationActive={false} />
+                            </BarChart>
+                        )}
+                        {chartType === 'pie' && (
+                            <RePieChart>
+                                <Pie data={chartData} cx="50%" cy="50%" outerRadius={40} dataKey="value" isAnimationActive={false}>
+                                    {chartData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                                </Pie>
+                            </RePieChart>
+                        )}
+                        {(chartType === 'line' || chartType === 'area') && (
+                            chartType === 'line' ? (
+                                <ReLineChart data={chartData} margin={{top:5, left:0, right:5, bottom:0}}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                                    <XAxis dataKey="name" tick={{fontSize: 8}} hide />
+                                    <YAxis tick={{fontSize: 8}} hide />
+                                    <Line type="monotone" dataKey="value" stroke="#3B82F6" strokeWidth={2} dot={false} isAnimationActive={false} />
+                                </ReLineChart>
+                            ) : (
+                                <ReAreaChart data={chartData} margin={{top:5, left:0, right:5, bottom:0}}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                                    <XAxis dataKey="name" tick={{fontSize: 8}} hide />
+                                    <YAxis tick={{fontSize: 8}} hide />
+                                    <Area type="monotone" dataKey="value" stroke="#3B82F6" fill="#3B82F6" fillOpacity={0.3} isAnimationActive={false} />
+                                </ReAreaChart>
+                            )
+                        )}
+                    </ResponsiveContainer>
+                </div>
+            </div>
+        );
     }
     return null;
 }
@@ -856,8 +945,111 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
                     continue;
                 }
 
+                // --- TABLE ---
+                if (nodeName === "p:graphicFrame") {
+                    const graphic = node.getElementsByTagName("a:graphic")[0];
+                    const graphicData = graphic?.getElementsByTagName("a:graphicData")[0];
+                    const tbl = graphicData?.getElementsByTagName("a:tbl")[0];
+
+                    if (tbl) {
+                        // Parse Table
+                        const tblGrid = tbl.getElementsByTagName("a:tblGrid")[0];
+                        const gridCols = tblGrid?.getElementsByTagName("a:gridCol");
+                        const columnWidths: number[] = [];
+                        let totalWidth = 0;
+
+                        if (gridCols) {
+                            for (let c = 0; c < gridCols.length; c++) {
+                                const w = emuToPx(gridCols[c].getAttribute("w"));
+                                columnWidths.push(w);
+                                totalWidth += w;
+                            }
+                        }
+
+                        // Convert to percentages
+                        const colWidthsPercent = columnWidths.map(w => (w / totalWidth) * 100);
+
+                        const tableRows: TableCell[][] = [];
+                        const trs = tbl.getElementsByTagName("a:tr");
+
+                        for (let r = 0; r < trs.length; r++) {
+                            const tr = trs[r];
+                            const rowCells: TableCell[] = [];
+                            const tcs = tr.getElementsByTagName("a:tc");
+
+                            for (let c = 0; c < tcs.length; c++) {
+                                const tc = tcs[c];
+                                const txBody = tc.getElementsByTagName("a:txBody")[0];
+                                let cellText = "";
+
+                                if (txBody) {
+                                    const paragraphs = Array.from(txBody.getElementsByTagName("a:p"));
+                                    cellText = paragraphs.map(p => {
+                                        return Array.from(p.getElementsByTagName("a:t")).map(t => t.textContent).join("");
+                                    }).join("\n");
+                                }
+
+                                // Get cell properties
+                                const gridSpan = tc.getAttribute("gridSpan");
+                                const rowSpan = tc.getAttribute("rowSpan");
+                                const tcPr = tc.getElementsByTagName("a:tcPr")[0];
+                                const solidFill = tcPr?.getElementsByTagName("a:solidFill")[0];
+                                const bgColor = parsePptxColor(solidFill);
+
+                                rowCells.push({
+                                    text: cellText,
+                                    colSpan: gridSpan ? parseInt(gridSpan) : undefined,
+                                    rowSpan: rowSpan ? parseInt(rowSpan) : undefined,
+                                    style: {
+                                        backgroundColor: bgColor,
+                                        fontSize: `${8 * scale}px`,
+                                        color: '#333'
+                                    }
+                                });
+                            }
+                            tableRows.push(rowCells);
+                        }
+
+                        elements.push({
+                            id: `table-${Date.now()}-${zIndex}`,
+                            type: 'table',
+                            tableData: {
+                                rows: tableRows,
+                                columnWidths: colWidthsPercent
+                            },
+                            x: finalX, y: finalY, w: finalW, h: finalH,
+                            zIndex,
+                            style: { opacity: 1, rotation: rot }
+                        });
+                        continue;
+                    }
+
+                    // --- EMBEDDED CHART (Simplified Fallback) ---
+                    const chart = graphicData?.getElementsByTagName("c:chart")[0];
+                    if (chart) {
+                        // For now, create a placeholder - full chart parsing is complex
+                        // Would need to parse xl/charts/chart1.xml and xl/worksheets/sheet1.xml
+                        elements.push({
+                            id: `chart-${Date.now()}-${zIndex}`,
+                            type: 'chart',
+                            chartData: {
+                                chartType: 'bar',
+                                data: [
+                                    { name: 'A', value: 100 },
+                                    { name: 'B', value: 200 },
+                                    { name: 'C', value: 150 }
+                                ],
+                                title: 'Embedded Chart'
+                            },
+                            x: finalX, y: finalY, w: finalW, h: finalH,
+                            zIndex,
+                            style: { opacity: 1, rotation: rot }
+                        });
+                        continue;
+                    }
+                }
                 // --- PICTURE ---
-                if (nodeName === "p:pic") {
+                else if (nodeName === "p:pic") {
                     const blipFill = node.getElementsByTagName("p:blipFill")[0];
                     const blip = blipFill?.getElementsByTagName("a:blip")[0];
                     const embedId = blip?.getAttribute("r:embed");
@@ -866,7 +1058,7 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
                         let targetPath = relMap[embedId];
                         if (targetPath.startsWith("..")) targetPath = targetPath.replace("..", "ppt");
                         else targetPath = "ppt/slides/" + targetPath;
-                        
+
                         const imgFile = zip.file(targetPath);
                         if (imgFile) {
                             const base64 = await imgFile.async("base64");
