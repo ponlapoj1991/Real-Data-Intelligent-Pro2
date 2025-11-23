@@ -30,6 +30,20 @@ const CANVAS_BG = "#f3f4f6"; // Lighter background to make white canvas pop
 
 const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#6366F1', '#84cc16', '#14b8a6'];
 
+// Ensure all images inside a container are fully loaded before rendering
+const waitForImages = async (container: HTMLElement) => {
+    const imgs = Array.from(container.querySelectorAll('img'));
+    if (imgs.length === 0) return;
+
+    await Promise.all(imgs.map(img => {
+        if (img.complete && img.naturalWidth !== 0) return Promise.resolve();
+        return new Promise<void>(resolve => {
+            img.onload = () => resolve();
+            img.onerror = () => resolve();
+        });
+    }));
+};
+
 // --- Helper Functions ---
 
 const getSentimentColor = (key: string, index: number) => {
@@ -1398,6 +1412,10 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
 
           // Wait for render + font loading to reduce blank captures
           await document.fonts?.ready.catch(() => Promise.resolve());
+          await new Promise(resolve => requestAnimationFrame(() => resolve(null)));
+          // Ensure images like logos/backgrounds are ready before capture
+          await waitForImages(container);
+          // One more RAF to allow late image paints to flush
           await new Promise(resolve => requestAnimationFrame(() => resolve(null)));
 
           try {
