@@ -26,6 +26,7 @@ const CANVAS_WIDTH = 960;
 const CANVAS_HEIGHT = 540; // 16:9 Aspect Ratio
 const SNAP_GRID = 10;
 const CANVAS_BG = "#f3f4f6"; // Lighter background to make white canvas pop
+const DRAG_ACTIVATION_DISTANCE = 2; // Require slight movement to start drag
 
 const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#6366F1', '#84cc16', '#14b8a6'];
 
@@ -479,6 +480,7 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
     initialElements: Record<string, { x: number, y: number, w: number, h: number, rotation?: number }>;
     dragOffset: { x: number, y: number };
     pointerDown?: boolean;
+    dragStarted?: boolean;
   }>({
     active: false,
     mode: 'drag',
@@ -487,7 +489,8 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
     startY: 0,
     initialElements: {},
     dragOffset: { x: 0, y: 0 },
-    pointerDown: false
+    pointerDown: false,
+    dragStarted: false
   });
 
   // History State
@@ -679,14 +682,15 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
       });
 
       dragRef.current = {
-          active: true,
+          active: false,
           mode: 'drag',
           handle: null,
           startX: e.clientX,
           startY: e.clientY,
           initialElements,
           dragOffset: { x: (e.clientX - rect.left)/scale, y: (e.clientY - rect.top)/scale },
-          pointerDown: true
+          pointerDown: true,
+          dragStarted: false
       };
   };
 
@@ -699,14 +703,15 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
       if (!el) return;
 
       dragRef.current = {
-          active: true,
+          active: false,
           mode: 'resize',
           handle,
           startX: e.clientX,
           startY: e.clientY,
           initialElements: { [id as string]: { ...el, rotation: el.style?.rotation || 0 } },
           dragOffset: { x: 0, y: 0 },
-          pointerDown: true
+          pointerDown: true,
+          dragStarted: false
       };
   };
 
@@ -719,33 +724,45 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
       if (!el) return;
       
       dragRef.current = {
-          active: true,
+          active: false,
           mode: 'rotate',
           handle: null,
           startX: e.clientX,
           startY: e.clientY,
           initialElements: { [id as string]: { ...el, rotation: el.style?.rotation || 0 } },
           dragOffset: { x: 0, y: 0 },
-          pointerDown: true
+          pointerDown: true,
+          dragStarted: false
       };
   };
 
   // Global Mouse Move / Up
   useEffect(() => {
       const handleMouseMove = (e: MouseEvent) => {
-          if (!dragRef.current.active || !canvasRef.current || !dragRef.current.pointerDown || e.buttons === 0) {
+          if (!canvasRef.current || !dragRef.current.pointerDown || e.buttons === 0) {
               dragRef.current.active = false;
               dragRef.current.pointerDown = false;
+              dragRef.current.dragStarted = false;
               return;
           }
           const { mode, startX, startY, initialElements, handle } = dragRef.current;
           const scale = zoomLevel;
+          const deltaXRaw = (e.clientX - startX) / scale;
+          const deltaYRaw = (e.clientY - startY) / scale;
+
+          if (!dragRef.current.active) {
+              const distanceMoved = Math.max(Math.abs(deltaXRaw), Math.abs(deltaYRaw));
+              if (distanceMoved < DRAG_ACTIVATION_DISTANCE) return;
+              dragRef.current.active = true;
+              dragRef.current.dragStarted = true;
+          }
+
           const newSlides = [...slides];
           const slide = newSlides[activeSlideIdx];
 
           if (mode === 'drag') {
-              const deltaX = (e.clientX - startX) / scale;
-              const deltaY = (e.clientY - startY) / scale;
+              const deltaX = deltaXRaw;
+              const deltaY = deltaYRaw;
 
               slide.elements = slide.elements.map(el => {
                   if (initialElements[el.id]) {
@@ -763,8 +780,8 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
           } else if (mode === 'resize') {
               const id = Object.keys(initialElements)[0];
               const init = initialElements[id];
-              const deltaX = (e.clientX - startX) / scale;
-              const deltaY = (e.clientY - startY) / scale;
+              const deltaX = deltaXRaw;
+              const deltaY = deltaYRaw;
 
               const elIdx = slide.elements.findIndex(x => x.id === id);
               if (elIdx === -1) return;
@@ -812,9 +829,11 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
       };
 
       const handleMouseUp = () => {
-          if (dragRef.current.active) {
-              dragRef.current.active = false;
-              dragRef.current.pointerDown = false;
+          const wasDragging = dragRef.current.active && dragRef.current.dragStarted;
+          dragRef.current.active = false;
+          dragRef.current.pointerDown = false;
+          dragRef.current.dragStarted = false;
+          if (wasDragging) {
               saveToHistory(slides); // Save state after drag end
           }
       };

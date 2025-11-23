@@ -154,16 +154,48 @@ const addTableToSlide = (
     });
 };
 
+const ensurePptxExportReady = async (slides: ReportSlide[]) => {
+    if (!window.PptxGenJS) {
+        throw new Error("Export libraries not loaded. Refresh and try again.");
+    }
+
+    if (!slides.length) {
+        throw new Error("No slides to export.");
+    }
+
+    // Wait for custom fonts to finish loading to avoid blank text boxes
+    if (typeof document !== 'undefined' && (document as any).fonts?.ready) {
+        try {
+            await (document as any).fonts.ready;
+        } catch (err) {
+            console.warn("Font loading wait failed", err);
+        }
+    }
+
+    const missingAssets: string[] = [];
+    slides.forEach((slide, sIdx) => {
+        slide.elements.forEach((el, eIdx) => {
+            if (el.type === 'image' && !el.content) {
+                missingAssets.push(`Slide ${sIdx + 1} element ${eIdx + 1} missing image data`);
+            }
+            if (el.w <= 0 || el.h <= 0) {
+                missingAssets.push(`Slide ${sIdx + 1} element ${eIdx + 1} has invalid dimensions`);
+            }
+        });
+    });
+
+    if (missingAssets.length) {
+        throw new Error(missingAssets[0]);
+    }
+};
+
 export const generateCustomReport = async (
   project: Project,
   slides: ReportSlide[],
   canvasWidth: number,
   canvasHeight: number
 ) => {
-  if (!window.PptxGenJS) {
-    alert("Export libraries not loaded.");
-    return;
-  }
+  await ensurePptxExportReady(slides);
 
   const pptx = new window.PptxGenJS();
   pptx.layout = 'LAYOUT_16x9'; // 10 x 5.625 inches
