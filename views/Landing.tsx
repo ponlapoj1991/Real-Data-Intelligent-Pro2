@@ -52,9 +52,13 @@ const Landing: React.FC<LandingProps> = ({ onSelectProject }) => {
 
   const stats = useMemo(() => {
     const totalProjects = projects.length;
-    const totalRows = projects.reduce((acc, p) => acc + p.data.length, 0);
-    const lastActive = projects.length > 0 
-        ? new Date(Math.max(...projects.map(p => p.lastModified))).toLocaleDateString() 
+    const totalRows = projects.reduce((acc, p) => {
+      const tableRows = (p.database || []).reduce((tAcc, tbl) => tAcc + (tbl.rows?.length || 0), 0);
+      const prepRows = (p.prepConfigs || []).reduce((tAcc, cfg) => tAcc + (cfg.outputRows?.length || 0), 0);
+      return acc + tableRows + prepRows;
+    }, 0);
+    const lastActive = projects.length > 0
+        ? new Date(Math.max(...projects.map(p => p.lastModified))).toLocaleDateString()
         : '-';
     return { totalProjects, totalRows, lastActive };
   }, [projects]);
@@ -68,8 +72,8 @@ const Landing: React.FC<LandingProps> = ({ onSelectProject }) => {
       name: newProjectName,
       description: newProjectDesc,
       lastModified: Date.now(),
-      data: [],
-      columns: [],
+      database: [],
+      prepConfigs: [],
     };
 
     await saveProject(newProject);
@@ -293,7 +297,7 @@ const Landing: React.FC<LandingProps> = ({ onSelectProject }) => {
                         {new Date(project.lastModified).toLocaleDateString()}
                     </div>
                     <div className="flex items-center text-xs text-blue-600 font-medium bg-blue-50 px-2 py-1 rounded-md">
-                        {project.data.length} rows
+                        {(project.database || []).reduce((acc, tbl) => acc + (tbl.rows?.length || 0), 0)} rows
                     </div>
                     </div>
                 </div>

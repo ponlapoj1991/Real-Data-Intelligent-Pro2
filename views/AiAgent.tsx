@@ -13,6 +13,7 @@ import { exportToExcel, parseExcelFile, inferColumns } from '../utils/excel';
 import { processAiAgentAction, askAiAgent } from '../utils/ai';
 import TableColumnFilter from '../components/TableColumnFilter';
 import { useToast } from '../components/ToastProvider';
+import { getDefaultSource } from '../utils/dataSources';
 
 interface AiAgentProps {
   project: Project;
@@ -106,19 +107,16 @@ const AiAgent: React.FC<AiAgentProps> = ({ project, onUpdateProject }) => {
   const [containerHeight, setContainerHeight] = useState(600);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
+  const defaultSource = useMemo(() => getDefaultSource(project), [project]);
 
   // --- Initialization ---
   useEffect(() => {
       // When project changes or mode switches to project, load project data
       if (sourceMode === 'project') {
-          setGridData(project.data);
-          if (project.columns.length > 0) {
-              setColumns(project.columns.map(c => c.key));
-          } else if (project.data.length > 0) {
-              setColumns(Object.keys(project.data[0]));
-          } else {
-              setColumns([]);
-          }
+          const sourceRows = defaultSource?.rows || [];
+          const sourceColumns = defaultSource?.columns || (sourceRows[0] ? Object.keys(sourceRows[0]) : []);
+          setGridData(sourceRows);
+          setColumns(sourceColumns);
           setFilters({}); // Reset filters on source change
           setSelection(null);
           
@@ -416,32 +414,65 @@ const AiAgent: React.FC<AiAgentProps> = ({ project, onUpdateProject }) => {
   const handleSaveProject = async () => {
       if (sourceMode === 'upload') {
           if(window.confirm("Merge these uploaded rows into the main Project?")) {
-              const updatedData = [...project.data, ...gridData];
-              let updatedCols = project.columns;
+              const targetTable = (project.database || [])[0];
+              const mergedColumns = [...(targetTable?.columns || [])];
               columns.forEach(c => {
-                  if(!updatedCols.find(xc => xc.key === c)) {
-                      updatedCols.push({ key: c, type: 'string', visible: true });
+                  if(!mergedColumns.find(xc => xc.key === c)) {
+                      mergedColumns.push({ key: c, type: 'string', visible: true });
                   }
               });
-              const updated = { ...project, data: updatedData, columns: updatedCols };
-              onUpdateProject(updated);
-              await saveProject(updated);
-              setSourceMode('project'); // Switch back
+
+              if (targetTable) {
+                  const updatedTable = {
+                      ...targetTable,
+                      rows: [...targetTable.rows, ...gridData],
+                      columns: mergedColumns,
+                      updatedAt: Date.now(),
+                  };
+                  const updatedProject = {
+                      ...project,
+                      database: [updatedTable, ...(project.database || []).slice(1)],
+                  };
+                  onUpdateProject(updatedProject);
+                  await saveProject(updatedProject);
+              } else {
+                  const newTable = {
+                      id: `raw_${crypto.randomUUID()}`,
+                      name: 'Imported Table',
+                      rows: gridData,
+                      columns: mergedColumns,
+                      createdAt: Date.now(),
+                      updatedAt: Date.now(),
+                      createdBy: 'AI Agent'
+                  };
+                  const updatedProject = { ...project, database: [newTable], lastModified: Date.now() };
+                  onUpdateProject(updatedProject);
+                  await saveProject(updatedProject);
+              }
+              setSourceMode('project');
               showToast('Data Merged', `Successfully merged external file.`, 'success');
           }
       } else {
           // Save updates to existing project including presets
-          const updated = { ...project, data: gridData, aiPresets: presets };
-          let updatedCols = project.columns;
+          const targetTable = (project.database || [])[0];
+          const updatedCols = [...(targetTable?.columns || [])];
           columns.forEach(c => {
               if(!updatedCols.find(xc => xc.key === c)) {
                   updatedCols.push({ key: c, type: 'string', visible: true, label: c });
               }
           });
-          updated.columns = updatedCols;
-          
-          onUpdateProject(updated);
-          await saveProject(updated);
+
+          let updatedProject: Project;
+          if (targetTable) {
+              const updatedTable = { ...targetTable, rows: gridData, columns: updatedCols, updatedAt: Date.now() };
+              updatedProject = { ...project, database: [updatedTable, ...(project.database || []).slice(1)], aiPresets: presets };
+          } else {
+              const newTable = { id: `raw_${crypto.randomUUID()}`, name: 'Primary Table', rows: gridData, columns: updatedCols, createdAt: Date.now(), updatedAt: Date.now() } as any;
+              updatedProject = { ...project, database: [newTable], aiPresets: presets };
+          }
+
+          onUpdateProject(updatedProject);
+          await saveProject(updatedProject);
           showToast('Project Saved', 'Data and AI Presets have been saved.', 'success');
       }
   };
