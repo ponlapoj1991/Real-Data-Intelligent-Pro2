@@ -219,6 +219,7 @@ export interface PrepConfig {
   outputColumns: ColumnConfig[];
   lastRun: number;
   description?: string;
+  transformRules?: TransformationRule[];
 }
 
 export interface Project {

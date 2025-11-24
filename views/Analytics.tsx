@@ -83,6 +83,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
   const dataSources = useMemo(() => toDataSources(project), [project]);
   const defaultSource = dataSources[0] || null;
+  const baseData = defaultSource?.rows || [];
 
   const availableColumns = useMemo(() => {
       if (!defaultSource || defaultSource.columns.length === 0) return [];
