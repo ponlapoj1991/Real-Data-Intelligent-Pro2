@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import Landing from './views/Landing';
 import Sidebar from './components/Sidebar';
-import DataIngest from './views/DataIngest';
+import DatabaseManager from './views/DatabaseManager';
 import DataPrep from './views/DataPrep';
 import Analytics from './views/Analytics';
 import ReportBuilder from './views/ReportBuilder';
@@ -25,8 +25,8 @@ const App: React.FC = () => {
   const handleSelectProject = (project: Project) => {
     setCurrentProject(project);
     setCurrentView(AppView.PROJECT);
-    setActiveTab(ProjectTab.UPLOAD); // Default start at upload
-    saveLastState(project.id, ProjectTab.UPLOAD);
+    setActiveTab(ProjectTab.DATABASE); // Default start at database
+    saveLastState(project.id, ProjectTab.DATABASE);
   };
 
   const handleTabChange = (tab: ProjectTab) => {
@@ -39,7 +39,7 @@ const App: React.FC = () => {
   const handleBackToLanding = () => {
     setCurrentView(AppView.LANDING);
     setCurrentProject(null);
-    saveLastState('', ProjectTab.UPLOAD); // Clear state
+    saveLastState('', ProjectTab.DATABASE); // Clear state
   };
 
   const updateProject = (updated: Project) => {
@@ -66,7 +66,7 @@ const App: React.FC = () => {
               {/* Top Bar */}
               <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-8 shadow-sm flex-shrink-0 z-10">
                   <span className="text-sm text-gray-500 font-medium">
-                      {activeTab === ProjectTab.UPLOAD && 'Step 1: Ingestion'}
+                      {activeTab === ProjectTab.DATABASE && 'Step 1: Database Management'}
                       {activeTab === ProjectTab.PREP && 'Step 2: Processing'}
                       {activeTab === ProjectTab.VISUALIZE && 'Step 3: Analysis'}
                       {activeTab === ProjectTab.AI_AGENT && 'Step 4: AI Enrichment'}
@@ -80,17 +80,14 @@ const App: React.FC = () => {
               </header>
 
               <main className="flex-1 overflow-hidden relative">
-                  {activeTab === ProjectTab.UPLOAD && (
-                      <div className="h-full overflow-y-auto">
-                          <DataIngest 
-                              project={currentProject} 
-                              onUpdateProject={updateProject} 
-                              onNext={() => handleTabChange(ProjectTab.PREP)}
-                          />
-                      </div>
+                  {activeTab === ProjectTab.DATABASE && (
+                      <DatabaseManager
+                          project={currentProject}
+                          onUpdateProject={updateProject}
+                      />
                   )}
                   {activeTab === ProjectTab.PREP && (
-                      <DataPrep 
+                      <DataPrep
                           project={currentProject}
                           onUpdateProject={updateProject}
                       />
