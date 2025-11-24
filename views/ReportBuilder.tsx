@@ -8,10 +8,10 @@ import {
     BringToFront, SendToBack, PaintBucket,
     ChevronLeft, ChevronRight, BarChart3, PieChart, LineChart, Activity, Hash, Cloud, Table,
     Undo2, Redo2, Square, Circle, Triangle, ArrowRight, Minus, Star, Highlighter, Copy, Move, RotateCw, Image as ImageIcon,
-    FileText, Settings, Presentation, PanelRightClose, PanelRightOpen, FileInput, X
+    FileText, Settings, Presentation, PanelRightClose, PanelRightOpen, FileInput
 } from 'lucide-react';
 import { saveProject } from '../utils/storage';
-import { generateCustomReport, validateSlidesForPptx } from '../utils/report';
+import { generateCustomReport } from '../utils/report';
 import { applyTransformation } from '../utils/transform';
 import { ResponsiveContainer, BarChart, Bar, PieChart as RePieChart, Pie, Cell, LineChart as ReLineChart, Line, AreaChart as ReAreaChart, Area, CartesianGrid, XAxis, YAxis } from 'recharts';
 import { useToast } from '../components/ToastProvider';
@@ -465,9 +465,6 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
 
   const [activeMenu, setActiveMenu] = useState<string | null>(null); // For Top Bar Menus
   const [isProcessingPptx, setIsProcessingPptx] = useState(false);
-  const [isExportPreviewOpen, setIsExportPreviewOpen] = useState(false);
-  const [previewSlideIdx, setPreviewSlideIdx] = useState(0);
-  const [preflightIssues, setPreflightIssues] = useState<string[]>([]);
   const [isExporting, setIsExporting] = useState(false);
   const [guides, setGuides] = useState<{ vertical?: number; horizontal?: number }>({});
   
@@ -1563,23 +1560,11 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
   };
 
   const handleExport = async () => {
-      const issues = await validateSlidesForPptx(slides);
-      setPreflightIssues(issues);
-      setPreviewSlideIdx(0);
-      setIsExportPreviewOpen(true);
-
-      if (issues.length) {
-          showToast("Export Check", "โปรดแก้ไขข้อผิดพลาดก่อนส่งออก (ดูรายละเอียดใน Preview)", "warning");
-      }
-  };
-
-  const performExport = async () => {
       setIsExporting(true);
       showToast("Exporting...", "Generating PowerPoint file...", "info");
       try {
           await generateCustomReport(project, slides, CANVAS_WIDTH, CANVAS_HEIGHT);
           showToast("Export Complete", "Download started.", "success");
-          setIsExportPreviewOpen(false);
       } catch (err: any) {
           console.error('Export failed', err);
           const message = err?.issues?.[0] || err?.message || "Unable to generate PPTX.";
@@ -1655,82 +1640,6 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
   return (
     <div className="flex flex-col h-full bg-gray-100 font-sans" onClick={() => setActiveMenu(null)}>
 
-      {/* Export Preview Modal */}
-      {isExportPreviewOpen && (
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[200] flex items-center justify-center p-6" onClick={() => setIsExportPreviewOpen(false)}>
-              <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
-                  <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
-                      <div>
-                          <div className="text-sm font-semibold text-gray-800">Export Preview</div>
-                          <div className="text-xs text-gray-500">ตรวจสอบสไลด์ก่อนส่งออก PPTX</div>
-                      </div>
-                      <button onClick={() => setIsExportPreviewOpen(false)} className="p-2 text-gray-500 hover:bg-gray-100 rounded-full">
-                          <X className="w-4 h-4" />
-                      </button>
-                  </div>
-
-                  <div className="flex flex-1 overflow-hidden">
-                      <div className="flex-1 p-4 overflow-y-auto bg-gray-50/50">
-                          {slides.length > 0 ? (
-                              <div className="bg-white rounded-lg shadow border border-gray-200 p-4 flex flex-col items-center">
-                                  <div className="relative bg-gray-100 border border-gray-200 rounded w-full flex items-center justify-center">
-                                      <div className="origin-top-left" style={{ transform: 'scale(0.7)', width: CANVAS_WIDTH, height: CANVAS_HEIGHT }}>
-                                          <ExportSlideView slide={slides[previewSlideIdx]} project={project} data={finalData} />
-                                      </div>
-                                  </div>
-                                  <div className="flex items-center justify-between w-full mt-3 text-xs text-gray-600">
-                                      <button
-                                        className="px-3 py-1 border border-gray-200 rounded bg-white hover:bg-gray-50 disabled:opacity-50"
-                                        onClick={() => setPreviewSlideIdx(Math.max(0, previewSlideIdx - 1))}
-                                        disabled={previewSlideIdx === 0}
-                                      >Prev</button>
-                                      <div>Slide {previewSlideIdx + 1} / {slides.length}</div>
-                                      <button
-                                        className="px-3 py-1 border border-gray-200 rounded bg-white hover:bg-gray-50 disabled:opacity-50"
-                                        onClick={() => setPreviewSlideIdx(Math.min(slides.length - 1, previewSlideIdx + 1))}
-                                        disabled={previewSlideIdx === slides.length - 1}
-                                      >Next</button>
-                                  </div>
-                              </div>
-                          ) : (
-                              <div className="h-full flex items-center justify-center text-sm text-gray-500">No slides available</div>
-                          )}
-                      </div>
-
-                      <div className="w-80 border-l border-gray-100 bg-white p-4 space-y-3 overflow-y-auto">
-                          <div className="text-sm font-semibold text-gray-800 flex items-center space-x-2">
-                              <span>Preflight Checklist</span>
-                          </div>
-                          <div className={`p-3 rounded border text-xs ${preflightIssues.length ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-green-200 bg-green-50 text-green-700'}`}>
-                              {preflightIssues.length ? (
-                                  <ul className="list-disc list-inside space-y-1">
-                                      {preflightIssues.map((issue, idx) => <li key={idx}>{issue}</li>)}
-                                  </ul>
-                              ) : (
-                                  <div>พร้อมส่งออก ไม่มีปัญหาตรวจพบ</div>
-                              )}
-                          </div>
-                          <div className="text-[11px] text-gray-500 leading-relaxed">
-                              โหมดส่งออก: PPTX แก้ไขได้เต็มรูปแบบ (Text/Image/Shape/Table/Chart)
-                          </div>
-                      </div>
-                  </div>
-
-                  <div className="px-5 py-3 border-t border-gray-100 bg-gray-50 flex items-center justify-between">
-                      <div className="text-xs text-gray-500">ระบบจะบล็อกการส่งออกถ้ามีปัญหา critical (ภาพหาย, ขนาด 0)</div>
-                      <div className="flex items-center space-x-2">
-                          <button onClick={() => setIsExportPreviewOpen(false)} className="px-3 py-1.5 rounded border border-gray-200 text-gray-600 bg-white hover:bg-gray-100">ยกเลิก</button>
-                          <button
-                            onClick={performExport}
-                            disabled={preflightIssues.length > 0 || isExporting}
-                            className={`px-4 py-1.5 rounded text-white text-sm font-semibold shadow-sm ${preflightIssues.length > 0 || isExporting ? 'bg-blue-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
-                          >{isExporting ? 'Exporting...' : 'Export PPTX'}</button>
-                      </div>
-                  </div>
-              </div>
-          </div>
-      )}
-      
       {/* 1. Main Toolbar (Google Slides style) */}
       <div className="bg-white border-b border-gray-200 flex flex-col z-20 shadow-sm flex-shrink-0" ref={menuRef}>
           
