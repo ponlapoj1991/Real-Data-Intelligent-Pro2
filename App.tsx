@@ -66,12 +66,12 @@ const App: React.FC = () => {
               {/* Top Bar */}
               <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-8 shadow-sm flex-shrink-0 z-10">
                   <span className="text-sm text-gray-500 font-medium">
-                      {activeTab === ProjectTab.DATABASE && 'Step 1: Database Management'}
-                      {activeTab === ProjectTab.PREP && 'Step 2: Processing'}
-                      {activeTab === ProjectTab.VISUALIZE && 'Step 3: Analysis'}
-                      {activeTab === ProjectTab.AI_AGENT && 'Step 4: AI Enrichment'}
-                      {activeTab === ProjectTab.REPORT && 'Step 5: Presentation Builder'}
-                      {activeTab === ProjectTab.SETTINGS && 'Configuration'}
+                      {activeTab === ProjectTab.DATABASE && 'Database Management'}
+                      {activeTab === ProjectTab.PREP && 'Data Processing'}
+                      {activeTab === ProjectTab.VISUALIZE && 'Analytics & Visualization'}
+                      {activeTab === ProjectTab.AI_AGENT && 'AI Agent'}
+                      {activeTab === ProjectTab.REPORT && 'Report Builder'}
+                      {activeTab === ProjectTab.SETTINGS && 'Project Settings'}
                   </span>
                   <div className="flex items-center space-x-2">
                       <span className="w-2 h-2 rounded-full bg-green-500"></span>
