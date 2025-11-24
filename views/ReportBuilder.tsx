@@ -26,6 +26,8 @@ const CANVAS_WIDTH = 960;
 const CANVAS_HEIGHT = 540; // 16:9 Aspect Ratio
 const SNAP_GRID = 10;
 const CANVAS_BG = "#f3f4f6"; // Lighter background to make white canvas pop
+const DRAG_ACTIVATION_DISTANCE = 2; // Require slight movement to start drag
+const GUIDE_SNAP_THRESHOLD = 4;
 
 const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#6366F1', '#84cc16', '#14b8a6'];
 
@@ -215,7 +217,7 @@ const SlideThumbnail: React.FC<{ slide: ReportSlide, project: Project, data: Raw
                 height: '100%', 
             }}
         >
-            <div 
+            <div
                 style={{
                     width: CANVAS_WIDTH,
                     height: CANVAS_HEIGHT,
@@ -224,10 +226,10 @@ const SlideThumbnail: React.FC<{ slide: ReportSlide, project: Project, data: Raw
                     position: 'absolute',
                     top: 0,
                     left: 0,
-                    backgroundColor: slide.background ? 'transparent' : 'white'
+                    backgroundColor: slide.background && !slide.background.startsWith('data:image') ? slide.background : 'white'
                 }}
             >
-                {slide.background && <img src={slide.background} className="absolute inset-0 w-full h-full object-cover" />}
+                {slide.background?.startsWith('data:image') && <img src={slide.background} className="absolute inset-0 w-full h-full object-cover" />}
                 {slide.elements.map(el => (
                     <div 
                         key={el.id}
@@ -242,6 +244,38 @@ const SlideThumbnail: React.FC<{ slide: ReportSlide, project: Project, data: Raw
                     </div>
                 ))}
             </div>
+        </div>
+    );
+};
+
+// Static renderer used for exporting PPT slides without editor chrome
+const ExportSlideView: React.FC<{ slide: ReportSlide, project: Project, data: RawRow[] }> = ({ slide, project, data }) => {
+    return (
+        <div
+            style={{
+                width: CANVAS_WIDTH,
+                height: CANVAS_HEIGHT,
+                position: 'relative',
+                backgroundColor: slide.background && !slide.background.startsWith('data:image') ? slide.background : 'white',
+                overflow: 'hidden'
+            }}
+        >
+            {slide.background?.startsWith('data:image') && (
+                <img src={slide.background} className="absolute inset-0 w-full h-full object-cover" />
+            )}
+            {slide.elements.map(el => (
+                <div
+                    key={el.id}
+                    style={{
+                        position: 'absolute',
+                        left: el.x, top: el.y, width: el.w, height: el.h,
+                        zIndex: el.zIndex,
+                        transform: `rotate(${el.style?.rotation || 0}deg)`
+                    }}
+                >
+                    <ElementContent el={el} project={project} data={data} />
+                </div>
+            ))}
         </div>
     );
 };
@@ -431,6 +465,8 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
 
   const [activeMenu, setActiveMenu] = useState<string | null>(null); // For Top Bar Menus
   const [isProcessingPptx, setIsProcessingPptx] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [guides, setGuides] = useState<{ vertical?: number; horizontal?: number }>({});
   
   const canvasRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -446,6 +482,8 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
     startY: number;
     initialElements: Record<string, { x: number, y: number, w: number, h: number, rotation?: number }>;
     dragOffset: { x: number, y: number };
+    pointerDown?: boolean;
+    dragStarted?: boolean;
   }>({
     active: false,
     mode: 'drag',
@@ -453,7 +491,9 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
     startX: 0,
     startY: 0,
     initialElements: {},
-    dragOffset: { x: 0, y: 0 }
+    dragOffset: { x: 0, y: 0 },
+    pointerDown: false,
+    dragStarted: false
   });
 
   // History State
@@ -469,6 +509,7 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
 
   const activeSlide = slides[activeSlideIdx];
   const primarySelectedId = Array.from(selectedElementIds)[0];
+  const selectionCount = selectedElementIds.size;
   const primaryElement = activeSlide.elements.find(el => el.id === primarySelectedId);
 
   // --- Click Outside to Close Menu ---
@@ -607,6 +648,102 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
       updateSlides(newSlides);
   };
 
+  const alignSelected = (mode: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => {
+      if (selectedElementIds.size < 2) return;
+      const newSlides = [...slides];
+      const slide = newSlides[activeSlideIdx];
+      const selected = slide.elements.filter(el => selectedElementIds.has(el.id));
+      if (!selected.length) return;
+
+      const bounds = selected.reduce((acc, el) => ({
+          minX: Math.min(acc.minX, el.x),
+          maxX: Math.max(acc.maxX, el.x + el.w),
+          minY: Math.min(acc.minY, el.y),
+          maxY: Math.max(acc.maxY, el.y + el.h)
+      }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
+
+      slide.elements = slide.elements.map(el => {
+          if (!selectedElementIds.has(el.id)) return el;
+          let nextX = el.x;
+          let nextY = el.y;
+          if (mode === 'left') nextX = bounds.minX;
+          if (mode === 'center') nextX = (bounds.minX + bounds.maxX) / 2 - el.w / 2;
+          if (mode === 'right') nextX = bounds.maxX - el.w;
+          if (mode === 'top') nextY = bounds.minY;
+          if (mode === 'middle') nextY = (bounds.minY + bounds.maxY) / 2 - el.h / 2;
+          if (mode === 'bottom') nextY = bounds.maxY - el.h;
+          if (showGrid) {
+              nextX = Math.round(nextX / SNAP_GRID) * SNAP_GRID;
+              nextY = Math.round(nextY / SNAP_GRID) * SNAP_GRID;
+          }
+          return { ...el, x: nextX, y: nextY };
+      });
+
+      updateSlides(newSlides);
+  };
+
+  const distributeSelected = (axis: 'horizontal' | 'vertical') => {
+      if (selectedElementIds.size < 3) return;
+      const newSlides = [...slides];
+      const slide = newSlides[activeSlideIdx];
+      const selected = slide.elements.filter(el => selectedElementIds.has(el.id));
+      if (selected.length < 3) return;
+
+      const sorted = [...selected].sort((a, b) => axis === 'horizontal' ? a.x - b.x : a.y - b.y);
+      const first = sorted[0];
+      const last = sorted[sorted.length - 1];
+      const firstCenter = axis === 'horizontal' ? first.x + first.w / 2 : first.y + first.h / 2;
+      const lastCenter = axis === 'horizontal' ? last.x + last.w / 2 : last.y + last.h / 2;
+      const gap = (lastCenter - firstCenter) / (sorted.length - 1);
+
+      const idToElement: Record<string, ReportElement> = {};
+      slide.elements.forEach(el => { idToElement[el.id] = el; });
+
+      sorted.forEach((el, idx) => {
+          const center = firstCenter + gap * idx;
+          if (axis === 'horizontal') {
+              idToElement[el.id] = { ...idToElement[el.id], x: center - el.w / 2 };
+          } else {
+              idToElement[el.id] = { ...idToElement[el.id], y: center - el.h / 2 };
+          }
+      });
+
+      if (showGrid) {
+          Object.keys(idToElement).forEach(id => {
+              const el = idToElement[id];
+              if (!selectedElementIds.has(id)) return;
+              idToElement[id] = {
+                  ...el,
+                  x: Math.round(el.x / SNAP_GRID) * SNAP_GRID,
+                  y: Math.round(el.y / SNAP_GRID) * SNAP_GRID
+              };
+          });
+      }
+
+      slide.elements = slide.elements.map(el => idToElement[el.id]);
+      updateSlides(newSlides);
+  };
+
+  const matchSize = (mode: 'width' | 'height' | 'both') => {
+      if (selectedElementIds.size < 2) return;
+      const newSlides = [...slides];
+      const slide = newSlides[activeSlideIdx];
+      const [baseId] = Array.from(selectedElementIds);
+      const base = slide.elements.find(el => el.id === baseId);
+      if (!base) return;
+
+      slide.elements = slide.elements.map(el => {
+          if (!selectedElementIds.has(el.id) || el.id === baseId) return el;
+          let nextW = el.w;
+          let nextH = el.h;
+          if (mode === 'width' || mode === 'both') nextW = base.w;
+          if (mode === 'height' || mode === 'both') nextH = base.h;
+          return { ...el, w: nextW, h: nextH };
+      });
+
+      updateSlides(newSlides);
+  };
+
   // --- Interaction Handlers ---
 
   const handleStageMouseDown = (e: React.MouseEvent) => {
@@ -645,13 +782,15 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
       });
 
       dragRef.current = {
-          active: true,
+          active: false,
           mode: 'drag',
           handle: null,
           startX: e.clientX,
           startY: e.clientY,
           initialElements,
-          dragOffset: { x: (e.clientX - rect.left)/scale, y: (e.clientY - rect.top)/scale }
+          dragOffset: { x: (e.clientX - rect.left)/scale, y: (e.clientY - rect.top)/scale },
+          pointerDown: true,
+          dragStarted: false
       };
   };
 
@@ -664,13 +803,15 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
       if (!el) return;
 
       dragRef.current = {
-          active: true,
+          active: false,
           mode: 'resize',
           handle,
           startX: e.clientX,
           startY: e.clientY,
           initialElements: { [id as string]: { ...el, rotation: el.style?.rotation || 0 } },
-          dragOffset: { x: 0, y: 0 }
+          dragOffset: { x: 0, y: 0 },
+          pointerDown: true,
+          dragStarted: false
       };
   };
 
@@ -683,28 +824,101 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
       if (!el) return;
       
       dragRef.current = {
-          active: true,
+          active: false,
           mode: 'rotate',
           handle: null,
           startX: e.clientX,
           startY: e.clientY,
           initialElements: { [id as string]: { ...el, rotation: el.style?.rotation || 0 } },
-          dragOffset: { x: 0, y: 0 }
+          dragOffset: { x: 0, y: 0 },
+          pointerDown: true,
+          dragStarted: false
       };
   };
 
   // Global Mouse Move / Up
   useEffect(() => {
       const handleMouseMove = (e: MouseEvent) => {
-          if (!dragRef.current.active || !canvasRef.current) return;
+          if (!canvasRef.current || !dragRef.current.pointerDown || e.buttons === 0) {
+              dragRef.current.active = false;
+              dragRef.current.pointerDown = false;
+              dragRef.current.dragStarted = false;
+              return;
+          }
           const { mode, startX, startY, initialElements, handle } = dragRef.current;
           const scale = zoomLevel;
+          const deltaXRaw = (e.clientX - startX) / scale;
+          const deltaYRaw = (e.clientY - startY) / scale;
+
+          if (!dragRef.current.active) {
+              const distanceMoved = Math.max(Math.abs(deltaXRaw), Math.abs(deltaYRaw));
+              if (distanceMoved < DRAG_ACTIVATION_DISTANCE) return;
+              dragRef.current.active = true;
+              dragRef.current.dragStarted = true;
+          }
+
           const newSlides = [...slides];
           const slide = newSlides[activeSlideIdx];
 
           if (mode === 'drag') {
-              const deltaX = (e.clientX - startX) / scale;
-              const deltaY = (e.clientY - startY) / scale;
+              const selectedInitials = Object.keys(initialElements).map(id => initialElements[id]);
+              if (selectedInitials.length === 0) return;
+
+              const selectionBox = selectedInitials.reduce((box, el) => ({
+                  minX: Math.min(box.minX, el.x),
+                  minY: Math.min(box.minY, el.y),
+                  maxX: Math.max(box.maxX, el.x + el.w),
+                  maxY: Math.max(box.maxY, el.y + el.h),
+              }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
+
+              let deltaX = deltaXRaw;
+              let deltaY = deltaYRaw;
+              const nextGuides: { vertical?: number; horizontal?: number } = {};
+
+              const selectionWidth = selectionBox.maxX - selectionBox.minX;
+              const selectionHeight = selectionBox.maxY - selectionBox.minY;
+
+              const checkSnap = (target: number, current: number, axis: 'x' | 'y') => {
+                  const diff = target - current;
+                  if (Math.abs(diff) <= GUIDE_SNAP_THRESHOLD) {
+                      if (axis === 'x') {
+                          deltaX += diff;
+                          nextGuides.vertical = target;
+                      } else {
+                          deltaY += diff;
+                          nextGuides.horizontal = target;
+                      }
+                  }
+              };
+
+              const others = slide.elements.filter(el => !initialElements[el.id]);
+
+              const selectionLeft = selectionBox.minX + deltaX;
+              const selectionRight = selectionBox.minX + selectionWidth + deltaX;
+              const selectionCenterX = selectionBox.minX + selectionWidth / 2 + deltaX;
+              const selectionTop = selectionBox.minY + deltaY;
+              const selectionBottom = selectionBox.minY + selectionHeight + deltaY;
+              const selectionCenterY = selectionBox.minY + selectionHeight / 2 + deltaY;
+
+              const snapTargetsX: number[] = [CANVAS_WIDTH / 2];
+              const snapTargetsY: number[] = [CANVAS_HEIGHT / 2];
+
+              others.forEach(other => {
+                  snapTargetsX.push(other.x, other.x + other.w / 2, other.x + other.w);
+                  snapTargetsY.push(other.y, other.y + other.h / 2, other.y + other.h);
+              });
+
+              snapTargetsX.forEach(target => {
+                  checkSnap(target, selectionLeft, 'x');
+                  checkSnap(target, selectionCenterX, 'x');
+                  checkSnap(target, selectionRight, 'x');
+              });
+
+              snapTargetsY.forEach(target => {
+                  checkSnap(target, selectionTop, 'y');
+                  checkSnap(target, selectionCenterY, 'y');
+                  checkSnap(target, selectionBottom, 'y');
+              });
 
               slide.elements = slide.elements.map(el => {
                   if (initialElements[el.id]) {
@@ -719,11 +933,13 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
                   }
                   return el;
               });
+
+              setGuides(nextGuides);
           } else if (mode === 'resize') {
               const id = Object.keys(initialElements)[0];
               const init = initialElements[id];
-              const deltaX = (e.clientX - startX) / scale;
-              const deltaY = (e.clientY - startY) / scale;
+              const deltaX = deltaXRaw;
+              const deltaY = deltaYRaw;
 
               const elIdx = slide.elements.findIndex(x => x.id === id);
               if (elIdx === -1) return;
@@ -760,19 +976,25 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
              const rect = canvasRef.current.getBoundingClientRect();
              const elCenterX = (init.x + init.w/2) * scale + rect.left;
              const elCenterY = (init.y + init.h/2) * scale + rect.top;
-             
+
              const angle = Math.atan2(e.clientY - elCenterY, e.clientX - elCenterX) * (180 / Math.PI);
              const rotation = (angle + 90) % 360;
-             
+
              slide.elements[elIdx].style = { ...slide.elements[elIdx].style, rotation };
+          } else {
+              setGuides({});
           }
 
           setSlides(newSlides);
       };
 
       const handleMouseUp = () => {
-          if (dragRef.current.active) {
-              dragRef.current.active = false;
+          const wasDragging = dragRef.current.active && dragRef.current.dragStarted;
+          dragRef.current.active = false;
+          dragRef.current.pointerDown = false;
+          dragRef.current.dragStarted = false;
+          setGuides({});
+          if (wasDragging) {
               saveToHistory(slides); // Save state after drag end
           }
       };
@@ -828,10 +1050,61 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
 
         const newSlides: ReportSlide[] = [];
 
+        const parseRelMap = (relsXml?: string | null) => {
+            const relMap: Record<string, string> = {};
+            if (!relsXml) return relMap;
+            const relsDoc = new DOMParser().parseFromString(relsXml, "text/xml");
+            const rels = relsDoc.getElementsByTagName("Relationship");
+            for (let r = 0; r < rels.length; r++) {
+                const id = rels[r].getAttribute("Id");
+                const target = rels[r].getAttribute("Target");
+                if (id && target) relMap[id] = target;
+            }
+            return relMap;
+        };
+
+        const normalizeTarget = (targetPath: string, base: 'slide' | 'layout' | 'master') => {
+            if (targetPath.startsWith("..")) return targetPath.replace("..", "ppt");
+            if (base === 'slide') return `ppt/slides/${targetPath}`;
+            if (base === 'layout') return `ppt/slideLayouts/${targetPath}`;
+            return `ppt/slideMasters/${targetPath}`;
+        };
+
+        const extractBackground = async (xmlDoc: Document, relMap: Record<string, string>) => {
+            const bgElements = xmlDoc.getElementsByTagName("p:bg");
+            if (bgElements.length > 0) {
+                const bgFill = bgElements[0].getElementsByTagName("p:bgPr")[0];
+                if (bgFill) {
+                    // Solid color background
+                    const solidFill = bgFill.getElementsByTagName("a:solidFill")[0];
+                    const colorFill = parsePptxColor(solidFill);
+                    if (colorFill) return colorFill;
+
+                    // Image background
+                    const blipFill = bgFill.getElementsByTagName("a:blipFill")[0];
+                    if (blipFill) {
+                        const blip = blipFill.getElementsByTagName("a:blip")[0];
+                        const embedId = blip?.getAttribute("r:embed");
+                        if (embedId && relMap[embedId]) {
+                            const targetPath = normalizeTarget(relMap[embedId], 'slide');
+                            const bgFile = zip.file(targetPath);
+                            if (bgFile) {
+                                const base64 = await bgFile.async("base64");
+                                const ext = targetPath.split('.').pop() || 'png';
+                                const mime = ext === 'jpg' ? 'jpeg' : ext;
+                                return `data:image/${mime};base64,${base64}`;
+                            }
+                        }
+                    }
+                }
+            }
+            return undefined;
+        };
+
         // Async Recursive Function
         const traverseShapesAsync = async (
-            nodeList: Element[], 
-            relMap: Record<string, string>, 
+            nodeList: Element[],
+            relMap: Record<string, string>,
             groupFrame: GroupTransform | null,
             accumulatedZIndex: { val: number }
         ): Promise<ReportElement[]> => {
@@ -1096,6 +1369,7 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
                         let fontSize = 16 * scale;
                         let fontColor = "#333333";
                         let isBold = false;
+                        let fontFamily: string | undefined = undefined;
                         let align = 'left';
 
                         if (paragraphs.length > 0) {
@@ -1116,6 +1390,9 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
                                     const color = parsePptxColor(solidFill);
                                     if (color) fontColor = color;
                                     if (rPr.getAttribute("b") === "1") isBold = true;
+                                    const latin = rPr.getElementsByTagName("a:latin")[0];
+                                    const typeface = latin?.getAttribute("typeface");
+                                    if (typeface) fontFamily = typeface;
                                 }
                             }
                         }
@@ -1136,6 +1413,7 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
                                     color: fontColor,
                                     fontWeight: isBold ? 'bold' : 'normal',
                                     backgroundColor: bgCol,
+                                    fontFamily,
                                     textAlign: align as any,
                                     rotation: rot
                                 }
@@ -1177,6 +1455,18 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
             return elements;
         };
 
+        const extractElementsFromDoc = async (
+            xmlDoc: Document,
+            relMap: Record<string, string>,
+            zOffset: number
+        ) => {
+            const shapeTree = xmlDoc.getElementsByTagName("p:spTree")[0];
+            if (!shapeTree) return [] as ReportElement[];
+            const children = Array.from(shapeTree.childNodes).filter(n => n.nodeType === 1) as Element[];
+            const elements = await traverseShapesAsync(children, relMap, null, { val: zOffset });
+            return elements;
+        };
+
         for (const fileName of slideFiles) {
             const slideXmlStr = await zip.file(fileName)?.async("string");
             if (!slideXmlStr) continue;
@@ -1184,55 +1474,61 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
             const slideNum = fileName.match(/slide(\d+)\.xml/)![1];
             const relsName = `ppt/slides/_rels/slide${slideNum}.xml.rels`;
             const relsXmlStr = await zip.file(relsName)?.async("string");
-
-            const relMap: Record<string, string> = {};
-            if (relsXmlStr) {
-                const relsDoc = new DOMParser().parseFromString(relsXmlStr, "text/xml");
-                const rels = relsDoc.getElementsByTagName("Relationship");
-                for (let r = 0; r < rels.length; r++) {
-                    const id = rels[r].getAttribute("Id");
-                    const target = rels[r].getAttribute("Target");
-                    if (id && target) relMap[id] = target;
-                }
-            }
-
+            const relMap = parseRelMap(relsXmlStr);
             const parser = new DOMParser();
             const xmlDoc = parser.parseFromString(slideXmlStr, "text/xml");
 
-            // Parse Slide Background
-            let slideBackground: string | undefined = undefined;
-            const bgElements = xmlDoc.getElementsByTagName("p:bg");
-            if (bgElements.length > 0) {
-                const bgFill = bgElements[0].getElementsByTagName("p:bgPr")[0];
-                if (bgFill) {
-                    const blipFill = bgFill.getElementsByTagName("a:blipFill")[0];
-                    if (blipFill) {
-                        const blip = blipFill.getElementsByTagName("a:blip")[0];
-                        const embedId = blip?.getAttribute("r:embed");
-                        if (embedId && relMap[embedId]) {
-                            let targetPath = relMap[embedId];
-                            if (targetPath.startsWith("..")) targetPath = targetPath.replace("..", "ppt");
-                            else targetPath = "ppt/slides/" + targetPath;
+            // Layout + Master
+            const relsDoc = relsXmlStr ? new DOMParser().parseFromString(relsXmlStr, "text/xml") : null;
+            const layoutRel = relsDoc?.querySelector("Relationship[Type$='slideLayout']");
+            const layoutTarget = layoutRel ? normalizeTarget(layoutRel.getAttribute("Target") || '', 'layout') : null;
 
-                            const bgFile = zip.file(targetPath);
-                            if (bgFile) {
-                                const base64 = await bgFile.async("base64");
-                                const ext = targetPath.split('.').pop() || 'png';
-                                const mime = ext === 'jpg' ? 'jpeg' : ext;
-                                slideBackground = `data:image/${mime};base64,${base64}`;
-                            }
-                        }
-                    }
+            const layoutXmlStr = layoutTarget ? await zip.file(layoutTarget)?.async("string") : null;
+            const layoutRelsStr = layoutTarget ? await zip.file(`${layoutTarget.replace('ppt/slideLayouts/', 'ppt/slideLayouts/_rels/')}.rels`)?.async("string") : null;
+            const layoutRelMap = parseRelMap(layoutRelsStr);
+
+            let masterXmlStr: string | null = null;
+            let masterRelMap: Record<string, string> = {};
+            if (layoutRelsStr) {
+                const layoutRelsDoc = new DOMParser().parseFromString(layoutRelsStr, "text/xml");
+                const masterRel = layoutRelsDoc.querySelector("Relationship[Type$='slideMaster']");
+                const masterTarget = masterRel ? normalizeTarget(masterRel.getAttribute("Target") || '', 'master') : null;
+                if (masterTarget) {
+                    masterXmlStr = await zip.file(masterTarget)?.async("string") || null;
+                    const masterRelsStr = await zip.file(`${masterTarget.replace('ppt/slideMasters/', 'ppt/slideMasters/_rels/')}.rels`)?.async("string");
+                    masterRelMap = parseRelMap(masterRelsStr);
                 }
             }
 
-            const shapeTree = xmlDoc.getElementsByTagName("p:spTree")[0];
-            if (shapeTree) {
-                const children = Array.from(shapeTree.childNodes).filter(n => n.nodeType === 1) as Element[];
-                const elements = await traverseShapesAsync(children, relMap, null, { val: 0 });
+            // Resolve Background Priority: slide -> layout -> master
+            let slideBackground = await extractBackground(xmlDoc, relMap);
+            if (!slideBackground && layoutXmlStr) {
+                slideBackground = await extractBackground(new DOMParser().parseFromString(layoutXmlStr, "text/xml"), layoutRelMap);
+            }
+            if (!slideBackground && masterXmlStr) {
+                slideBackground = await extractBackground(new DOMParser().parseFromString(masterXmlStr, "text/xml"), masterRelMap);
+            }
+
+            // Gather elements from master/layout/slide to keep brand assets
+            let aggregatedElements: ReportElement[] = [];
+            if (masterXmlStr) {
+                const masterDoc = new DOMParser().parseFromString(masterXmlStr, "text/xml");
+                aggregatedElements = aggregatedElements.concat(await extractElementsFromDoc(masterDoc, masterRelMap, aggregatedElements.length));
+            }
+            if (layoutXmlStr) {
+                const layoutDoc = new DOMParser().parseFromString(layoutXmlStr, "text/xml");
+                aggregatedElements = aggregatedElements.concat(await extractElementsFromDoc(layoutDoc, layoutRelMap, aggregatedElements.length));
+            }
+
+            const slideElements = await extractElementsFromDoc(xmlDoc, relMap, aggregatedElements.length);
+            aggregatedElements = aggregatedElements.concat(slideElements);
+
+            aggregatedElements = aggregatedElements.map((el, idx) => ({ ...el, zIndex: idx + 1 }));
+
+            if (aggregatedElements.length > 0 || slideBackground) {
                 newSlides.push({
                     id: `slide-${Date.now()}-${newSlides.length}`,
-                    elements,
+                    elements: aggregatedElements,
                     background: slideBackground
                 });
             }
@@ -1264,9 +1560,18 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
   };
 
   const handleExport = async () => {
+      setIsExporting(true);
       showToast("Exporting...", "Generating PowerPoint file...", "info");
-      await generateCustomReport(project, slides, CANVAS_WIDTH, CANVAS_HEIGHT);
-      showToast("Export Complete", "Download started.", "success");
+      try {
+          await generateCustomReport(project, slides, CANVAS_WIDTH, CANVAS_HEIGHT);
+          showToast("Export Complete", "Download started.", "success");
+      } catch (err: any) {
+          console.error('Export failed', err);
+          const message = err?.issues?.[0] || err?.message || "Unable to generate PPTX.";
+          showToast("Export Failed", message, "error");
+      } finally {
+          setIsExporting(false);
+      }
   };
 
   // --- Renderers ---
@@ -1334,7 +1639,7 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
 
   return (
     <div className="flex flex-col h-full bg-gray-100 font-sans" onClick={() => setActiveMenu(null)}>
-      
+
       {/* 1. Main Toolbar (Google Slides style) */}
       <div className="bg-white border-b border-gray-200 flex flex-col z-20 shadow-sm flex-shrink-0" ref={menuRef}>
           
@@ -1480,6 +1785,28 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
                         {/* Ordering */}
                         <button onClick={bringToFront} className="p-1.5 hover:bg-gray-200 rounded text-gray-600" title="Bring to Front"><BringToFront className="w-4 h-4" /></button>
                         <button onClick={sendToBack} className="p-1.5 hover:bg-gray-200 rounded text-gray-600" title="Send to Back"><SendToBack className="w-4 h-4" /></button>
+
+                        <div className="w-px h-5 bg-gray-300 mx-1"></div>
+
+                        {/* Align & Distribute */}
+                        <button disabled={selectionCount < 2} onClick={() => alignSelected('left')} className={`p-1.5 rounded ${selectionCount < 2 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Align Left"><AlignLeft className="w-4 h-4" /></button>
+                        <button disabled={selectionCount < 2} onClick={() => alignSelected('center')} className={`p-1.5 rounded ${selectionCount < 2 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Align Center"><AlignCenter className="w-4 h-4" /></button>
+                        <button disabled={selectionCount < 2} onClick={() => alignSelected('right')} className={`p-1.5 rounded ${selectionCount < 2 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Align Right"><AlignRight className="w-4 h-4" /></button>
+                        <button disabled={selectionCount < 2} onClick={() => alignSelected('top')} className={`p-1.5 rounded ${selectionCount < 2 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Align Top"><Move className="w-4 h-4 rotate-90" /></button>
+                        <button disabled={selectionCount < 2} onClick={() => alignSelected('middle')} className={`p-1.5 rounded ${selectionCount < 2 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Align Middle"><Move className="w-4 h-4 rotate-45" /></button>
+                        <button disabled={selectionCount < 2} onClick={() => alignSelected('bottom')} className={`p-1.5 rounded ${selectionCount < 2 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Align Bottom"><Move className="w-4 h-4" /></button>
+                        <button disabled={selectionCount < 3} onClick={() => distributeSelected('horizontal')} className={`px-2 py-1 rounded text-[11px] font-medium ${selectionCount < 3 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Distribute Horizontally">H⇆</button>
+                        <button disabled={selectionCount < 3} onClick={() => distributeSelected('vertical')} className={`px-2 py-1 rounded text-[11px] font-medium ${selectionCount < 3 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Distribute Vertically">V⇆</button>
+
+                        <div className="w-px h-5 bg-gray-300 mx-1"></div>
+
+                        {/* Match Size */}
+                        <button disabled={selectionCount < 2} onClick={() => matchSize('width')} className={`px-2 py-1 rounded text-[11px] font-medium ${selectionCount < 2 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Match Width">W=</button>
+                        <button disabled={selectionCount < 2} onClick={() => matchSize('height')} className={`px-2 py-1 rounded text-[11px] font-medium ${selectionCount < 2 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Match Height">H=</button>
+                        <button disabled={selectionCount < 2} onClick={() => matchSize('both')} className={`px-2 py-1 rounded text-[11px] font-medium ${selectionCount < 2 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Match Width & Height">W/H</button>
+
+                        <div className="w-px h-5 bg-gray-300 mx-1"></div>
+
                         <button onClick={deleteSelection} className="p-1.5 hover:bg-red-50 text-red-500 rounded" title="Delete"><Trash2 className="w-4 h-4" /></button>
                     </>
                  )}
@@ -1587,23 +1914,41 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
             className="flex-1 bg-gray-200 overflow-auto relative flex items-center justify-center p-10 custom-scrollbar" 
             onMouseDown={handleStageMouseDown}
           >
-              <div 
-                  className="bg-white shadow-2xl relative transition-transform duration-200 ease-linear origin-center"
+              <div
+                  className="bg-white shadow-2xl relative transition-transform duration-200 ease-linear origin-center overflow-hidden"
                   style={{
                       width: CANVAS_WIDTH,
                       height: CANVAS_HEIGHT,
-                      transform: `scale(${zoomLevel})`
+                      transform: `scale(${zoomLevel})`,
+                      backgroundColor: activeSlide.background && !activeSlide.background.startsWith('data:image') ? activeSlide.background : 'white'
                   }}
                   ref={canvasRef}
               >
+                  {activeSlide.background?.startsWith('data:image') && (
+                      <img src={activeSlide.background} className="absolute inset-0 w-full h-full object-cover" style={{ zIndex: 0 }} />
+                  )}
                   {/* Grid - Only show if enabled */}
                   {showGrid && (
-                      <div 
-                        className="absolute inset-0 pointer-events-none z-0" 
-                        style={{ 
+                      <div
+                        className="absolute inset-0 pointer-events-none z-0"
+                        style={{
                             backgroundImage: `linear-gradient(#e5e7eb 1px, transparent 1px), linear-gradient(90deg, #e5e7eb 1px, transparent 1px)`,
                             backgroundSize: `${SNAP_GRID*2}px ${SNAP_GRID*2}px`
-                        }} 
+                        }}
+                      />
+                  )}
+
+                  {/* Snap Guides */}
+                  {guides.vertical !== undefined && (
+                      <div
+                        className="absolute top-0 bottom-0 w-px bg-blue-400/60 pointer-events-none"
+                        style={{ left: guides.vertical, zIndex: 999 }}
+                      />
+                  )}
+                  {guides.horizontal !== undefined && (
+                      <div
+                        className="absolute left-0 right-0 h-px bg-blue-400/60 pointer-events-none"
+                        style={{ top: guides.horizontal, zIndex: 999 }}
                       />
                   )}
 
