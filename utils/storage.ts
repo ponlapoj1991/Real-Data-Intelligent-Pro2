@@ -1,4 +1,5 @@
 import { Project, ProjectTab } from '../types';
+import { isLegacyProject, migrateProjectToAssetBased, validateMigratedProject } from './migration';
 
 const DB_NAME = 'RealDataDB';
 const DB_VERSION = 1;
@@ -29,12 +30,92 @@ const openDB = (): Promise<IDBDatabase> => {
 
 export const getProjects = async (): Promise<Project[]> => {
   const db = await openDB();
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     const transaction = db.transaction([STORE_NAME], 'readonly');
     const store = transaction.objectStore(STORE_NAME);
     const request = store.getAll();
 
-    request.onsuccess = () => resolve(request.result || []);
+    request.onsuccess = async () => {
+      const projects = request.result || [];
+
+      // Auto-migrate legacy projects
+      const migratedProjects: Project[] = [];
+      let hasMigrations = false;
+
+      for (const project of projects) {
+        if (isLegacyProject(project)) {
+          console.log('🔄 Detected legacy project, migrating:', project.name);
+          try {
+            const migrated = migrateProjectToAssetBased(project);
+
+            if (validateMigratedProject(migrated)) {
+              // Save migrated version
+              await saveProject(migrated);
+              migratedProjects.push(migrated);
+              hasMigrations = true;
+              console.log('✅ Migration successful:', project.name);
+            } else {
+              console.error('❌ Migration validation failed:', project.name);
+              migratedProjects.push(project); // Keep original
+            }
+          } catch (error) {
+            console.error('❌ Migration error:', error);
+            migratedProjects.push(project); // Keep original on error
+          }
+        } else {
+          migratedProjects.push(project);
+        }
+      }
+
+      if (hasMigrations) {
+        console.log('✅ All migrations completed');
+      }
+
+      resolve(migratedProjects);
+    };
+
+    request.onerror = () => reject(request.error);
+  });
+};
+
+export const getProject = async (id: string): Promise<Project | null> => {
+  const db = await openDB();
+  return new Promise(async (resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], 'readonly');
+    const store = transaction.objectStore(STORE_NAME);
+    const request = store.get(id);
+
+    request.onsuccess = async () => {
+      const project = request.result;
+
+      if (!project) {
+        resolve(null);
+        return;
+      }
+
+      // Auto-migrate if legacy
+      if (isLegacyProject(project)) {
+        console.log('🔄 Migrating legacy project:', project.name);
+        try {
+          const migrated = migrateProjectToAssetBased(project);
+
+          if (validateMigratedProject(migrated)) {
+            await saveProject(migrated);
+            console.log('✅ Migration successful:', project.name);
+            resolve(migrated);
+          } else {
+            console.error('❌ Migration validation failed');
+            resolve(project); // Return original
+          }
+        } catch (error) {
+          console.error('❌ Migration error:', error);
+          resolve(project); // Return original on error
+        }
+      } else {
+        resolve(project);
+      }
+    };
+
     request.onerror = () => reject(request.error);
   });
 };
@@ -44,11 +125,10 @@ export const saveProject = async (project: Project): Promise<void> => {
   return new Promise((resolve, reject) => {
     const transaction = db.transaction([STORE_NAME], 'readwrite');
     const store = transaction.objectStore(STORE_NAME);
-    
+
     // Ensure lastModified is updated
-    // transformRules and other new fields will be saved automatically as long as they are part of the object
     const updatedProject = { ...project, lastModified: Date.now() };
-    
+
     const request = store.put(updatedProject);
 
     request.onsuccess = () => resolve();
@@ -79,5 +159,5 @@ export const getLastState = (): { projectId: string | null, tab: ProjectTab } =>
     const stored = localStorage.getItem(CONFIG_KEY);
     if (stored) return JSON.parse(stored);
   } catch (e) {}
-  return { projectId: null, tab: ProjectTab.UPLOAD };
+  return { projectId: null, tab: ProjectTab.DATABASE };
 };

@@ -6,12 +6,12 @@ export enum AppView {
 }
 
 export enum ProjectTab {
-  UPLOAD = 'UPLOAD',
+  DATABASE = 'DATABASE', // New: Raw Material Library
   PREP = 'PREP',
   VISUALIZE = 'VISUALIZE',
   REPORT = 'REPORT',
   AI_AGENT = 'AI_AGENT',
-  SETTINGS = 'SETTINGS', // New Tab
+  SETTINGS = 'SETTINGS',
 }
 
 export enum AIProvider {
@@ -80,7 +80,82 @@ export interface TransformationRule {
   valueMap?: Record<string, string>; // New: Map result values to new labels (e.g. 'isComment' -> 'Comment')
 }
 
-// --- Dashboard & Widget Types (Phase 2 & 3 & 4) ---
+// ==========================================
+// NEW: Asset-Based Architecture Types
+// ==========================================
+
+// --- Raw Assets (Drawer 1) ---
+
+export interface RawTable {
+  id: string;
+  name: string;
+  fileName: string;
+  fileType: 'csv' | 'xlsx' | 'gsheet';
+  data: RawRow[];           // Immutable original data
+  columns: string[];        // Auto-detected column names
+  rowCount: number;
+  createdBy: string;
+  createdAt: number;
+  lastModified: number;
+}
+
+// --- Prep Configurations (Drawer 2) ---
+
+export enum MergingStrategy {
+  UNION = 'UNION',          // Combine all tables (Union All)
+  APPEND = 'APPEND',        // Append sequentially
+  JOIN = 'JOIN'             // Join by key (future feature)
+}
+
+export interface ColumnMapping {
+  targetColumn: string;     // New column name
+  sourceColumns: string[];  // Source columns to map from
+}
+
+export interface PrepConfig {
+  id: string;
+  name: string;
+  description?: string;
+
+  // Source Selection
+  sourceTableIds: string[];        // Multiple Raw Table IDs
+  mergingStrategy: MergingStrategy;
+  columnMappings?: ColumnMapping[]; // Map columns with different names
+
+  // Transformation Rules (existing)
+  transformRules: TransformationRule[];
+
+  // Output (Cached Result)
+  outputData: RawRow[];
+  outputColumns: ColumnConfig[];
+
+  // Metadata
+  createdAt: number;
+  lastModified: number;
+}
+
+// --- Multiple Dashboards ---
+
+export interface Dashboard {
+  id: string;
+  name: string;
+  description?: string;
+  widgets: DashboardWidget[];
+  filters?: DashboardFilter[];
+  createdAt: number;
+  lastModified: number;
+}
+
+// --- Data Source Binding ---
+
+export interface DataSourceBinding {
+  type: 'raw' | 'prepped';
+  id: string;  // RawTable.id or PrepConfig.id
+}
+
+// ==========================================
+// Dashboard & Widget Types (Phase 2 & 3 & 4)
+// ==========================================
 
 export type ChartType = 'bar' | 'line' | 'pie' | 'area' | 'kpi' | 'wordcloud' | 'table';
 export type AggregateMethod = 'count' | 'sum' | 'avg';
@@ -95,14 +170,17 @@ export interface DashboardWidget {
   id: string;
   title: string;
   type: ChartType;
-  
+
+  // NEW: Data Source Binding
+  dataSource?: DataSourceBinding; // Optional for backward compatibility
+
   // Data Configuration
   dimension: string;      // X-Axis (Group By) or Text Col for Wordcloud/Table
   stackBy?: string;       // New: For Stacked Bar Charts (e.g. Stack by Sentiment)
   measure: AggregateMethod; // Method e.g., "Count"
   measureCol?: string;    // Y-Axis (Value) or Sort By for Table
   limit?: number;         // Limit rows (Top 10, 20, etc)
-  
+
   // Visuals
   color?: string;
   width: 'half' | 'full'; // Grid span
@@ -192,16 +270,22 @@ export interface Project {
   name: string;
   description: string;
   lastModified: number;
-  data: RawRow[];          // Original Raw Data
-  columns: ColumnConfig[]; // Config for Raw Data
-  
-  transformRules?: TransformationRule[];
-  dashboard?: DashboardWidget[]; // Saved Dashboard Config
-  
-  reportConfig?: ReportSlide[]; // Saved Report Builder Config
-  
-  aiSettings?: AISettings; // New: Per-project AI Settings
-  aiPresets?: AIPresets; // New: Saved Prompt Presets
+
+  // NEW: Asset-Based Architecture
+  rawTables?: RawTable[];        // Drawer 1: Raw Material Library
+  prepConfigs?: PrepConfig[];    // Drawer 2: Processing Factory
+  dashboards?: Dashboard[];      // Multiple Dashboards
+
+  // Legacy fields (for backward compatibility & migration)
+  data?: RawRow[];               // Deprecated: Use rawTables instead
+  columns?: ColumnConfig[];      // Deprecated: Use rawTables instead
+  transformRules?: TransformationRule[]; // Deprecated: Use prepConfigs instead
+  dashboard?: DashboardWidget[]; // Deprecated: Use dashboards instead
+
+  // Existing features
+  reportConfig?: ReportSlide[];  // Report Builder Config
+  aiSettings?: AISettings;       // Per-project AI Settings
+  aiPresets?: AIPresets;         // Saved Prompt Presets
 }
 
 // Interface for the globally available XLSX object from CDN
