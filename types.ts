@@ -110,7 +110,11 @@ export interface DashboardWidget {
   seriesColors?: Record<string, string>; // Override by series/category name
   showValues?: boolean; // Show data labels on charts
   showLegend?: boolean; // Toggle legend visibility
+  legendPosition?: 'top' | 'bottom' | 'left' | 'right';
   valueFormat?: 'number' | 'compact' | 'percent' | 'currency';
+  barOrientation?: 'horizontal' | 'vertical';
+  barMode?: 'grouped' | 'stacked' | 'percent';
+  showGrid?: boolean;
   width: 'half' | 'full'; // Grid span
 }
 

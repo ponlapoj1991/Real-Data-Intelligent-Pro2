@@ -48,7 +48,11 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   const [seriesColors, setSeriesColors] = useState<Record<string, string>>({});
   const [showValues, setShowValues] = useState(true);
   const [showLegend, setShowLegend] = useState(true);
+  const [legendPosition, setLegendPosition] = useState<'top' | 'bottom' | 'left' | 'right'>('bottom');
   const [valueFormat, setValueFormat] = useState<'number' | 'compact' | 'percent' | 'currency'>('number');
+  const [barOrientation, setBarOrientation] = useState<'horizontal' | 'vertical'>('horizontal');
+  const [barMode, setBarMode] = useState<'grouped' | 'stacked' | 'percent'>('grouped');
+  const [showGrid, setShowGrid] = useState(true);
   const [filters, setFilters] = useState<DashboardFilter[]>([]);
   const [filterColumn, setFilterColumn] = useState('');
   const [filterValue, setFilterValue] = useState('');
@@ -113,7 +117,11 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
             setSeriesColors(initialWidget.seriesColors || {});
             setShowValues(initialWidget.showValues !== undefined ? initialWidget.showValues : true);
             setShowLegend(initialWidget.showLegend !== undefined ? initialWidget.showLegend : true);
+            setLegendPosition(initialWidget.legendPosition || 'bottom');
             setValueFormat(initialWidget.valueFormat || 'number');
+            setBarOrientation(initialWidget.barOrientation || 'horizontal');
+            setBarMode(initialWidget.barMode || (initialWidget.stackBy ? 'stacked' : 'grouped'));
+            setShowGrid(initialWidget.showGrid !== undefined ? initialWidget.showGrid : true);
             setFilters(initialWidget.filters || []);
         } else {
             // Reset and trigger smart defaults
@@ -126,7 +134,11 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
             setSeriesColors({});
             setShowValues(true);
             setShowLegend(true);
+            setLegendPosition('bottom');
             setValueFormat('number');
+            setBarOrientation('horizontal');
+            setBarMode('grouped');
+            setShowGrid(true);
             setFilters([]);
             detectSmartDefaults();
         }
@@ -167,6 +179,8 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   const previewData = useMemo(() => {
       if (!dimension || filteredPreviewRows.length === 0) return { data: [], isStack: false };
 
+      const isPercentMode = barMode === 'percent';
+
       // Logic duplicated from Analytics.tsx to ensure WYSIWYG
       if (type === 'table') {
           let processed = [...filteredPreviewRows];
@@ -206,7 +220,22 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
               return row;
           });
           result.sort((a, b) => b.total - a.total);
-          return { data: limit ? result.slice(0, limit) : result, isStack: true, stackKeys: Array.from(stackKeys).sort() };
+          const normalized = isPercentMode
+              ? result.map(row => {
+                  const total = row.total || 0;
+                  const next = { ...row } as Record<string, number | string>;
+                  if (total > 0) {
+                    Array.from(stackKeys).forEach(key => {
+                        const val = (row as any)[key] || 0;
+                        next[key] = (val / total) * 100;
+                    });
+                    next.total = 100;
+                  }
+                  return next;
+              })
+              : result;
+          const sliced = limit ? normalized.slice(0, limit) : normalized;
+          return { data: sliced, isStack: barMode !== 'grouped', stackKeys: Array.from(stackKeys).sort() };
       }
 
       const groups: Record<string, number> = {};
@@ -237,6 +266,13 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
 
       let result = Object.keys(groups).map(k => ({ name: k, value: measure === 'avg' ? (groups[k] / data.filter(r => String(r[dimension]).includes(k)).length) : groups[k] }));
       result.sort((a, b) => b.value - a.value);
+
+      if (isPercentMode) {
+          const total = result.reduce((acc, curr) => acc + (curr.value || 0), 0);
+          if (total > 0) {
+              result = result.map(item => ({ ...item, value: (item.value / total) * 100 }));
+          }
+      }
       
       if (limit && result.length > limit) {
           if (type === 'wordcloud') result = result.slice(0, limit);
@@ -247,7 +283,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
           }
       }
       return { data: result, isStack: false };
-  }, [filteredPreviewRows, dimension, stackBy, measure, measureCol, limit, type]);
+  }, [filteredPreviewRows, dimension, stackBy, measure, measureCol, limit, type, barMode]);
 
   const getUniqueValues = (col: string) => {
       const unique = new Set(filteredPreviewRows.map(row => String(row[col] ?? '')));
@@ -289,7 +325,11 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
         seriesColors,
         showValues,
         showLegend,
+        legendPosition,
         valueFormat,
+        barOrientation,
+        barMode,
+        showGrid,
         filters
     };
     onSave(newWidget);
@@ -297,28 +337,62 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
 
   const renderPreview = () => {
       const { data: chartData, isStack, stackKeys } = previewData;
-      const formatTick = (val: number) => formatValue(val);
+      const isPercentMode = barMode === 'percent';
+      const formatTick = (val: number) => isPercentMode ? `${val.toFixed(1)}%` : formatValue(val);
+      const labelFormatter = (val: number) => isPercentMode ? `${val.toFixed(1)}%` : formatValue(Number(val) || 0);
       if (chartData.length === 0) return <div className="text-gray-400 flex flex-col items-center"><Activity className="w-12 h-12 mb-2 opacity-20"/>No Data to Preview</div>;
 
       if (type === 'bar') {
+          const isHorizontal = barOrientation === 'horizontal';
+          const layout = isHorizontal ? 'vertical' : 'horizontal';
+          const legendConfig = {
+            top: { verticalAlign: 'top' as const, align: 'center' as const },
+            bottom: { verticalAlign: 'bottom' as const, align: 'center' as const },
+            left: { verticalAlign: 'middle' as const, align: 'left' as const, layout: 'vertical' as const },
+            right: { verticalAlign: 'middle' as const, align: 'right' as const, layout: 'vertical' as const }
+          };
+          const legendPlacement = legendConfig[legendPosition];
           return (
               <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData as any[]} layout="vertical" margin={{ left: 20, right: 20 }}>
-                      <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
-                      <XAxis type="number" hide tickFormatter={formatTick} />
-                      <YAxis dataKey="name" type="category" width={80} tick={{fontSize: 10}} interval={0} />
-                      <Tooltip cursor={{fill: '#f1f5f9'}} contentStyle={{borderRadius: '8px'}} />
-                      {showLegend && <Legend />}
-                      {isStack && stackKeys ? stackKeys.map((key, idx) => (
-                          <Bar key={key} dataKey={key} stackId="a" fill={getColorForKey(key, idx)} radius={[0,0,0,0]} barSize={20}>
-                              {showValues && <LabelList dataKey={key} position="right" formatter={(val: number) => formatValue(Number(val) || 0)} />}
+                  <BarChart data={chartData as any[]} layout={layout} margin={{ left: 20, right: 20 }}>
+                      {showGrid && (
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          horizontal={!isHorizontal}
+                          vertical={isHorizontal}
+                          stroke="#e2e8f0"
+                        />
+                      )}
+                      {isHorizontal ? (
+                        <>
+                          <XAxis type="number" tickFormatter={formatTick} />
+                          <YAxis dataKey="name" type="category" width={90} tick={{fontSize: 10}} interval={0} />
+                        </>
+                      ) : (
+                        <>
+                          <XAxis dataKey="name" type="category" tick={{fontSize: 10}} interval={0} />
+                          <YAxis type="number" tickFormatter={formatTick} width={70} />
+                        </>
+                      )}
+                      <Tooltip cursor={{fill: '#f1f5f9'}} contentStyle={{borderRadius: '8px'}} formatter={(val: any, name: any) => [labelFormatter(Number(val) || 0), name]} />
+                      {showLegend && <Legend {...legendPlacement} iconType="circle" wrapperStyle={{fontSize: '11px'}} />}
+                      {stackBy && stackKeys ? stackKeys.map((key, idx) => (
+                          <Bar
+                            key={key}
+                            dataKey={key}
+                            stackId={barMode === 'grouped' ? undefined : 'a'}
+                            fill={getColorForKey(key, idx)}
+                            radius={isHorizontal ? [0,0,0,0] : [4,4,0,0]}
+                            barSize={22}
+                          >
+                              {showValues && <LabelList dataKey={key} position={isHorizontal ? 'right' : 'top'} formatter={labelFormatter} />}
                           </Bar>
                       )) : (
-                          <Bar dataKey="value" fill={getThemeColor(0)} radius={[0, 4, 4, 0]} barSize={20}>
+                          <Bar dataKey="value" fill={getThemeColor(0)} radius={isHorizontal ? [0, 4, 4, 0] : [4, 4, 0, 0]} barSize={22}>
                               {(chartData as any[]).map((entry, idx) => (
                                   <Cell key={entry.name} fill={getColorForKey(entry.name, idx)} />
                               ))}
-                              {showValues && <LabelList dataKey="value" position="right" formatter={(val: number) => formatValue(Number(val) || 0)} />}
+                              {showValues && <LabelList dataKey="value" position={isHorizontal ? 'right' : 'top'} formatter={labelFormatter} />}
                           </Bar>
                       )}
                   </BarChart>
@@ -557,6 +631,55 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                             </label>
                         ))}
                     </div>
+
+                    {type === 'bar' && (
+                      <>
+                        <div className="grid grid-cols-2 gap-2 mb-3">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">Bar Orientation</label>
+                                <select
+                                  value={barOrientation}
+                                  onChange={e => setBarOrientation(e.target.value as any)}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                                >
+                                    <option value="horizontal">Horizontal (Bar)</option>
+                                    <option value="vertical">Vertical (Column)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">Bar Mode</label>
+                                <select
+                                  value={barMode}
+                                  onChange={e => setBarMode(e.target.value as any)}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                                >
+                                    <option value="grouped">Grouped</option>
+                                    <option value="stacked">Stacked</option>
+                                    <option value="percent">100% Stacked</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 mb-3">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">Legend Position</label>
+                                <select
+                                  value={legendPosition}
+                                  onChange={e => setLegendPosition(e.target.value as any)}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                                >
+                                    <option value="top">Top</option>
+                                    <option value="bottom">Bottom</option>
+                                    <option value="left">Left</option>
+                                    <option value="right">Right</option>
+                                </select>
+                            </div>
+                            <label className="flex items-center space-x-2 text-sm text-gray-700 mt-6">
+                                <input type="checkbox" checked={showGrid} onChange={e => setShowGrid(e.target.checked)} />
+                                <span>Show gridlines</span>
+                            </label>
+                        </div>
+                      </>
+                    )}
 
                     <div className="flex items-center space-x-3 mb-3">
                          <span className="text-sm text-gray-600">Limit:</span>

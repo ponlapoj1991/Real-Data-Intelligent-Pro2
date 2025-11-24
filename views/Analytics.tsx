@@ -278,8 +278,10 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
           return { data: processed.slice(0, widget.limit || 20), isStack: false };
       }
 
-      // 2. STACKED BAR CHART (New Logic)
+      // 2. BAR CHART LOGIC
       if (widget.type === 'bar' && widget.stackBy) {
+          const barMode = widget.barMode || 'stacked';
+          const isPercentMode = barMode === 'percent';
           const stackKeys = new Set<string>();
           const groups: Record<string, Record<string, number>> = {};
 
@@ -312,11 +314,26 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
           // Sort by total desc
           result.sort((a, b) => b.total - a.total);
-          
-          return { 
-              data: widget.limit ? result.slice(0, widget.limit) : result, 
-              isStack: true, 
-              stackKeys: Array.from(stackKeys).sort() 
+
+          const normalized = isPercentMode
+            ? result.map(row => {
+                const total = row.total || 0;
+                const next = { ...row } as Record<string, number | string>;
+                if (total > 0) {
+                  Array.from(stackKeys).forEach(key => {
+                    const val = (row as any)[key] || 0;
+                    next[key] = (val / total) * 100;
+                  });
+                  next.total = 100;
+                }
+                return next;
+            })
+            : result;
+
+          return {
+              data: widget.limit ? normalized.slice(0, widget.limit) : normalized,
+              isStack: barMode !== 'grouped',
+              stackKeys: Array.from(stackKeys).sort()
           };
       }
       
@@ -361,6 +378,13 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       }));
 
       result.sort((a, b) => b.value - a.value);
+
+      if (widget.barMode === 'percent') {
+          const total = result.reduce((acc, curr) => acc + (curr.value || 0), 0);
+          if (total > 0) {
+              result = result.map(item => ({ ...item, value: (item.value / total) * 100 }));
+          }
+      }
       
       const limit = widget.limit || 20;
 
@@ -402,53 +426,80 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       const palette = getPalette(widget);
       const showLegend = widget.showLegend !== false;
       const showValues = widget.showValues !== false;
-      const formatTick = (val: number) => formatWidgetValue(widget, val);
+      const isPercentMode = widget.barMode === 'percent';
+      const formatTick = (val: number) => isPercentMode ? `${val.toFixed(1)}%` : formatWidgetValue(widget, val);
+      const labelFormatter = (val: number) => isPercentMode ? `${val.toFixed(1)}%` : formatWidgetValue(widget, Number(val) || 0);
 
       if (!data || data.length === 0) return <div className="flex items-center justify-center h-full text-gray-400 text-sm">No Data</div>;
 
       switch (widget.type) {
           case 'bar':
+              const isHorizontal = (widget.barOrientation || 'horizontal') === 'horizontal';
+              const layout = isHorizontal ? 'vertical' : 'horizontal';
+              const legendConfig = {
+                  top: { verticalAlign: 'top' as const, align: 'center' as const },
+                  bottom: { verticalAlign: 'bottom' as const, align: 'center' as const },
+                  left: { verticalAlign: 'middle' as const, align: 'left' as const, layout: 'vertical' as const },
+                  right: { verticalAlign: 'middle' as const, align: 'right' as const, layout: 'vertical' as const },
+              };
+              const legendPlacement = legendConfig[widget.legendPosition || 'bottom'];
               return (
                   <ResponsiveContainer width="100%" height="100%">
                           <BarChart
                             data={data as any[]}
-                            layout="vertical"
+                            layout={layout}
                             margin={{ left: 20, right: 20 }}
                           >
-                              <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f3f4f6" />
-                          <XAxis type="number" hide tickFormatter={formatTick} />
-                          <YAxis dataKey="name" type="category" width={100} tick={{fontSize: 11}} interval={0} />
-                          <Tooltip contentStyle={{borderRadius: '8px'}} cursor={{fill: '#f3f4f6'}} />
-                          {showLegend && <Legend iconType="circle" wrapperStyle={{fontSize: '11px'}} />}
+                              {widget.showGrid !== false && (
+                                <CartesianGrid
+                                    strokeDasharray="3 3"
+                                    horizontal={!isHorizontal}
+                                    vertical={isHorizontal}
+                                    stroke="#f3f4f6"
+                                />
+                              )}
+                          {isHorizontal ? (
+                            <>
+                              <XAxis type="number" tickFormatter={formatTick} />
+                              <YAxis dataKey="name" type="category" width={100} tick={{fontSize: 11}} interval={0} />
+                            </>
+                          ) : (
+                            <>
+                              <XAxis dataKey="name" type="category" tick={{fontSize: 11}} interval={0} />
+                              <YAxis type="number" tickFormatter={formatTick} width={80} />
+                            </>
+                          )}
+                          <Tooltip contentStyle={{borderRadius: '8px'}} cursor={{fill: '#f3f4f6'}} formatter={(val: any, name: any) => [labelFormatter(Number(val) || 0), name]} />
+                          {showLegend && <Legend {...legendPlacement} iconType="circle" wrapperStyle={{fontSize: '11px'}} />}
 
-                          {isStack && stackKeys ? (
+                          {stackKeys && stackKeys.length ? (
                               stackKeys.map((key, idx) => (
                                   <Bar
                                     key={key}
                                     dataKey={key}
-                                    stackId="a"
+                                    stackId={isStack ? 'a' : undefined}
                                     fill={getWidgetColor(widget, key, idx)}
-                                    radius={[0,0,0,0]} // Clean stack
-                                    barSize={20}
-                                    onClick={(data, index, e) => handleChartClick(e, widget, data.name)}
+                                    radius={isHorizontal ? [0,0,0,0] : [4,4,0,0]}
+                                    barSize={22}
+                                    onClick={(barData: any, index: number, e: any) => handleChartClick(e, widget, barData.name)}
                                     className="cursor-pointer"
                                   >
-                                      {showValues && <LabelList dataKey={key} position="right" formatter={(val: number) => formatWidgetValue(widget, Number(val) || 0)} />}
+                                      {showValues && <LabelList dataKey={key} position={isHorizontal ? 'right' : 'top'} formatter={labelFormatter} />}
                                   </Bar>
                               ))
                           ) : (
                                 <Bar
                                     dataKey="value"
                                     fill={widget.color || palette[0] || '#3B82F6'}
-                                    radius={[0, 4, 4, 0]}
-                                    barSize={20}
+                                    radius={isHorizontal ? [0, 4, 4, 0] : [4, 4, 0, 0]}
+                                    barSize={22}
                                     className="cursor-pointer"
-                                    onClick={(data, index, e) => handleChartClick(e, widget, data.name)}
+                                    onClick={(barData: any, index: number, e: any) => handleChartClick(e, widget, barData.name)}
                                 >
                                     {(data as any[]).map((entry, idx) => (
                                         <Cell key={entry.name} fill={getWidgetColor(widget, entry.name, idx)} />
                                     ))}
-                                    {showValues && <LabelList dataKey="value" position="right" formatter={(val: number) => formatWidgetValue(widget, Number(val) || 0)} />}
+                                    {showValues && <LabelList dataKey="value" position={isHorizontal ? 'right' : 'top'} formatter={labelFormatter} />}
                                 </Bar>
                           )}
                       </BarChart>
