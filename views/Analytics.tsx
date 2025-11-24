@@ -1,8 +1,8 @@
 
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Project, DashboardWidget, DashboardFilter, DrillDownState, RawRow } from '../types';
-import { 
-    PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, AreaChart, Area 
+import {
+    PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, AreaChart, Area
 } from 'recharts';
 import { Sparkles, Bot, Loader2, Plus, LayoutGrid, Trash2, Pencil, Filter, X, Presentation, FileOutput, Eye, EyeOff, Table, Download, ChevronRight, MousePointer2, MousePointerClick, MessageSquarePlus, Command } from 'lucide-react';
 import { analyzeProjectData, generateWidgetFromPrompt, DataSummary } from '../utils/ai';
@@ -10,6 +10,7 @@ import { applyTransformation } from '../utils/transform';
 import { saveProject } from '../utils/storage';
 import { generatePowerPoint } from '../utils/report';
 import { exportToExcel } from '../utils/excel';
+import { resolveDataSource } from '../utils/dataSource';
 import ChartBuilder from '../components/ChartBuilder';
 import EmptyState from '../components/EmptyState';
 import Skeleton from '../components/Skeleton';
@@ -236,9 +237,22 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
   // --- Data Processing for Widgets ---
 
   const processWidgetData = (widget: DashboardWidget) => {
+      // Resolve data from widget's data source binding
+      const widgetBaseData = resolveDataSource(widget.dataSource, project);
+
+      // Apply global filters (if widget uses same data source as baseData)
+      // For now, apply filters to all widgets for consistency
+      const widgetFilteredData = filters.length === 0 ? widgetBaseData : widgetBaseData.filter(row => {
+          return filters.every(f => {
+              if (!f.value) return true;
+              const val = String(row[f.column]);
+              return val === f.value;
+          });
+      });
+
       // 1. TABLE WIDGET
       if (widget.type === 'table') {
-          let processed = [...filteredData];
+          let processed = [...widgetFilteredData];
           if (widget.measureCol) {
               processed.sort((a, b) => {
                    const valA = a[widget.measureCol!];
@@ -254,13 +268,13 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       if (widget.type === 'bar' && widget.stackBy) {
           const stackKeys = new Set<string>();
           const groups: Record<string, Record<string, number>> = {};
-          
-          filteredData.forEach(row => {
+
+          widgetFilteredData.forEach(row => {
               const dimVal = String(row[widget.dimension] || '(Empty)');
               const stackVal = String(row[widget.stackBy!] || '(Other)');
-              
+
               stackKeys.add(stackVal);
-              
+
               if (!groups[dimVal]) groups[dimVal] = {};
               if (!groups[dimVal][stackVal]) groups[dimVal][stackVal] = 0;
 
@@ -284,18 +298,18 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
           // Sort by total desc
           result.sort((a, b) => b.total - a.total);
-          
-          return { 
-              data: widget.limit ? result.slice(0, widget.limit) : result, 
-              isStack: true, 
-              stackKeys: Array.from(stackKeys).sort() 
+
+          return {
+              data: widget.limit ? result.slice(0, widget.limit) : result,
+              isStack: true,
+              stackKeys: Array.from(stackKeys).sort()
           };
       }
-      
+
       // 3. STANDARD CHARTS
       const groups: Record<string, number> = {};
-      
-      filteredData.forEach(row => {
+
+      widgetFilteredData.forEach(row => {
           let groupKey = String(row[widget.dimension]);
           if (row[widget.dimension] === null || row[widget.dimension] === undefined) groupKey = "(Empty)";
 
@@ -315,7 +329,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
           keysToProcess.forEach(k => {
               if (!k) return;
               if (!groups[k]) groups[k] = 0;
-              
+
               if (widget.measure === 'count' || widget.type === 'wordcloud') {
                   groups[k]++;
               } else {
@@ -327,18 +341,18 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
       let result = Object.keys(groups).map(k => ({
           name: k,
-          value: widget.measure === 'avg' 
-            ? (groups[k] / filteredData.filter(r => String(r[widget.dimension]).includes(k)).length)
+          value: widget.measure === 'avg'
+            ? (groups[k] / widgetFilteredData.filter(r => String(r[widget.dimension]).includes(k)).length)
             : groups[k]
       }));
 
       result.sort((a, b) => b.value - a.value);
-      
+
       const limit = widget.limit || 20;
 
       if (result.length > limit) {
           if (widget.type === 'wordcloud') {
-               result = result.slice(0, limit); 
+               result = result.slice(0, limit);
           } else {
                const others = result.slice(limit).reduce((acc, curr) => acc + curr.value, 0);
                result = result.slice(0, limit);
@@ -830,13 +844,12 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
           )}
       </div>
 
-      <ChartBuilder 
+      <ChartBuilder
         isOpen={isBuilderOpen}
         onClose={() => setIsBuilderOpen(false)}
         onSave={handleSaveWidget}
-        availableColumns={availableColumns}
+        project={project}
         initialWidget={editingWidget}
-        data={filteredData}
       />
 
       {/* Drill Down Modal */}

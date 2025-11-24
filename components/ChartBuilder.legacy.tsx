@@ -1,17 +1,17 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, BarChart3, PieChart, LineChart, Hash, Activity, Save, Table, Cloud, Layers, Eye, Palette, Sparkles, Database } from 'lucide-react';
-import { ChartType, DashboardWidget, AggregateMethod, RawRow, Project, DataSourceBinding } from '../types';
+import { X, BarChart3, PieChart, LineChart, Hash, Activity, Save, Table, Cloud, Layers, Eye, Palette, Sparkles } from 'lucide-react';
+import { ChartType, DashboardWidget, AggregateMethod, RawRow } from '../types';
 import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, Legend, PieChart as RePieChart, Pie, Cell, LineChart as ReLineChart, Line, AreaChart as ReAreaChart, Area } from 'recharts';
 import { analyzeSourceColumn } from '../utils/transform';
-import { resolveDataSource, getDataSourceColumns, getAvailableDataSources, getDefaultDataSource } from '../utils/dataSource';
 
 interface ChartBuilderProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (widget: DashboardWidget) => void;
-  project: Project;
+  availableColumns: string[];
   initialWidget?: DashboardWidget | null;
+  data: RawRow[];
 }
 
 const THEMES = {
@@ -27,53 +27,39 @@ const generateId = () => {
   return 'widget-' + Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 9);
 };
 
-const ChartBuilder: React.FC<ChartBuilderProps> = ({
-  isOpen,
-  onClose,
-  onSave,
-  project,
-  initialWidget
+const ChartBuilder: React.FC<ChartBuilderProps> = ({ 
+  isOpen, 
+  onClose, 
+  onSave, 
+  availableColumns, 
+  initialWidget,
+  data
 }) => {
   const [title, setTitle] = useState('');
   const [type, setType] = useState<ChartType>('bar');
   const [dimension, setDimension] = useState('');
-  const [stackBy, setStackBy] = useState('');
+  const [stackBy, setStackBy] = useState(''); 
   const [measure, setMeasure] = useState<AggregateMethod>('count');
   const [measureCol, setMeasureCol] = useState('');
   const [limit, setLimit] = useState<number | undefined>(undefined);
   const [width, setWidth] = useState<'half' | 'full'>('half');
   const [theme, setTheme] = useState<keyof typeof THEMES>('default');
-  const [dataSource, setDataSource] = useState<DataSourceBinding | undefined>(undefined);
-
-  // Compute effective data and columns based on selected source
-  const effectiveData = useMemo(() => {
-    return resolveDataSource(dataSource, project);
-  }, [dataSource, project]);
-
-  const effectiveColumns = useMemo(() => {
-    return getDataSourceColumns(dataSource, project);
-  }, [dataSource, project]);
-
-  // Get available data sources for selector
-  const availableSources = useMemo(() => {
-    return getAvailableDataSources(project);
-  }, [project]);
 
   // Smart Default Logic
   const detectSmartDefaults = () => {
-      if (effectiveData.length === 0 || effectiveColumns.length === 0) return;
+      if (data.length === 0 || availableColumns.length === 0) return;
 
-      let bestDim = effectiveColumns[0];
+      let bestDim = availableColumns[0];
       let bestMeasureCol = '';
       let bestMeasure: AggregateMethod = 'count';
-
+      
       // 1. Find best Dimension (Date or Categorical with low cardinality)
-      for (const col of effectiveColumns) {
-          const analysis = analyzeSourceColumn(effectiveData, col);
+      for (const col of availableColumns) {
+          const analysis = analyzeSourceColumn(data, col);
           // Prefer Date
           if (analysis.isDateLikely) {
               bestDim = col;
-              break;
+              break; 
           }
           // Or Categorical (String)
           if (!analysis.isDateLikely && !analysis.isArrayLikely) {
@@ -82,13 +68,13 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       }
 
       // 2. Find best Measure (Numeric)
-      for (const col of effectiveColumns) {
+      for (const col of availableColumns) {
           if (col === bestDim) continue;
-          const isNumeric = effectiveData.slice(0, 20).every(r => {
+          const isNumeric = data.slice(0, 20).every(r => {
               const val = r[col];
               return val === null || val === '' || !isNaN(Number(val));
           });
-
+          
           if (isNumeric) {
               bestMeasureCol = col;
               bestMeasure = 'sum';
@@ -99,7 +85,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       setDimension(bestDim);
       setMeasure(bestMeasure);
       setMeasureCol(bestMeasureCol);
-
+      
       // Auto-title
       setTitle(`${bestMeasure === 'count' ? 'Count' : 'Sum'} by ${bestDim}`);
   };
@@ -115,7 +101,6 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
             setMeasureCol(initialWidget.measureCol || '');
             setLimit(initialWidget.limit);
             setWidth(initialWidget.width);
-            setDataSource(initialWidget.dataSource);
         } else {
             // Reset and trigger smart defaults
             setTitle('');
@@ -123,11 +108,10 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
             setStackBy('');
             setLimit(undefined);
             setWidth('half');
-            setDataSource(getDefaultDataSource(project));
             detectSmartDefaults();
         }
     }
-  }, [isOpen, initialWidget, project]);
+  }, [isOpen, initialWidget]);
 
   const activeColors = THEMES[theme];
 
@@ -136,11 +120,11 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   };
 
   const previewData = useMemo(() => {
-      if (!dimension || effectiveData.length === 0) return { data: [], isStack: false };
+      if (!dimension || data.length === 0) return { data: [], isStack: false };
 
       // Logic duplicated from Analytics.tsx to ensure WYSIWYG
       if (type === 'table') {
-          let processed = [...effectiveData];
+          let processed = [...data];
           if (measureCol) {
               processed.sort((a, b) => {
                    const valA = a[measureCol];
@@ -155,8 +139,8 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       if (type === 'bar' && stackBy) {
           const stackKeys = new Set<string>();
           const groups: Record<string, Record<string, number>> = {};
-
-          effectiveData.forEach(row => {
+          
+          data.forEach(row => {
               const dimVal = String(row[dimension] || '(Empty)');
               const stackVal = String(row[stackBy] || '(Other)');
               stackKeys.add(stackVal);
@@ -181,10 +165,10 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       }
 
       const groups: Record<string, number> = {};
-      effectiveData.forEach(row => {
+      data.forEach(row => {
           let groupKey = String(row[dimension]);
           if (row[dimension] === null || row[dimension] === undefined) groupKey = "(Empty)";
-
+          
           // Handle Array split for tags
           let keysToProcess = [groupKey];
           if (groupKey.startsWith('[') || groupKey.includes(',')) {
@@ -206,9 +190,9 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
           });
       });
 
-      let result = Object.keys(groups).map(k => ({ name: k, value: measure === 'avg' ? (groups[k] / effectiveData.filter(r => String(r[dimension]).includes(k)).length) : groups[k] }));
+      let result = Object.keys(groups).map(k => ({ name: k, value: measure === 'avg' ? (groups[k] / data.filter(r => String(r[dimension]).includes(k)).length) : groups[k] }));
       result.sort((a, b) => b.value - a.value);
-
+      
       if (limit && result.length > limit) {
           if (type === 'wordcloud') result = result.slice(0, limit);
           else {
@@ -218,7 +202,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
           }
       }
       return { data: result, isStack: false };
-  }, [effectiveData, dimension, stackBy, measure, measureCol, limit, type]);
+  }, [data, dimension, stackBy, measure, measureCol, limit, type]);
 
   if (!isOpen) return null;
 
@@ -231,8 +215,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
         measure,
         measureCol: measure === 'count' ? undefined : measureCol,
         limit, width,
-        color: activeColors[0], // Save primary color of theme
-        dataSource: dataSource // Save data source binding
+        color: activeColors[0] // Save primary color of theme
     };
     onSave(newWidget);
   };
@@ -322,19 +305,19 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
         <div className="flex-1 flex overflow-hidden">
             {/* Left: Configuration */}
             <div className="w-1/3 border-r border-gray-200 bg-gray-50/50 flex flex-col overflow-y-auto p-6 space-y-6 custom-scrollbar">
-
+                
                 {/* 1. Title */}
                 <div>
                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1.5">Chart Title</label>
                     <div className="flex space-x-2">
-                        <input
+                        <input 
                             value={title}
                             onChange={e => setTitle(e.target.value)}
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white"
                             placeholder="e.g. Sales by Region"
                             autoFocus
                         />
-                        <button
+                        <button 
                             onClick={detectSmartDefaults}
                             className="p-2 bg-white border border-gray-300 rounded-lg hover:bg-blue-50 hover:text-blue-600 text-gray-500 transition-colors"
                             title="Auto-Suggest Configuration"
@@ -342,49 +325,6 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                             <Sparkles className="w-4 h-4" />
                         </button>
                     </div>
-                </div>
-
-                {/* 1.5. Data Source Selector */}
-                <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1.5 flex items-center">
-                        <Database className="w-3 h-3 mr-1" />
-                        Data Source
-                    </label>
-                    <select
-                        value={dataSource ? `${dataSource.type}-${dataSource.id}` : ''}
-                        onChange={e => {
-                            if (!e.target.value) {
-                                setDataSource(undefined);
-                                return;
-                            }
-                            const [type, id] = e.target.value.split('-');
-                            setDataSource({ type: type as 'raw' | 'prepped', id });
-                        }}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white"
-                    >
-                        <option value="">Legacy Data</option>
-                        {availableSources.raw.length > 0 && (
-                            <optgroup label="Raw Tables">
-                                {availableSources.raw.map(source => (
-                                    <option key={source.id} value={`raw-${source.id}`}>
-                                        {source.name} ({source.rowCount.toLocaleString()} rows)
-                                    </option>
-                                ))}
-                            </optgroup>
-                        )}
-                        {availableSources.prepped.length > 0 && (
-                            <optgroup label="Prepped Data">
-                                {availableSources.prepped.map(source => (
-                                    <option key={source.id} value={`prepped-${source.id}`}>
-                                        {source.name} ({source.rowCount.toLocaleString()} rows)
-                                    </option>
-                                ))}
-                            </optgroup>
-                        )}
-                    </select>
-                    <p className="text-xs text-gray-400 mt-1.5">
-                        {effectiveData.length.toLocaleString()} rows, {effectiveColumns.length} columns
-                    </p>
                 </div>
 
                 {/* 2. Type Selection */}
@@ -418,13 +358,13 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                         <label className="block text-xs font-bold text-gray-700 mb-1">
                             {type === 'wordcloud' ? 'Text Source' : 'X-Axis (Group By)'}
                         </label>
-                        <select
+                        <select 
                             value={dimension}
                             onChange={e => setDimension(e.target.value)}
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
                         >
                             <option value="">Select Column...</option>
-                            {effectiveColumns.map(col => (
+                            {availableColumns.map(col => (
                                 <option key={col} value={col}>{col}</option>
                             ))}
                         </select>
@@ -435,13 +375,13 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                             <label className="block text-xs font-bold text-gray-700 mb-1 flex items-center">
                                 <Layers className="w-3 h-3 mr-1" /> Stack By
                             </label>
-                            <select
+                            <select 
                                 value={stackBy}
                                 onChange={e => setStackBy(e.target.value)}
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
                             >
                                 <option value="">None</option>
-                                {effectiveColumns.map(col => (
+                                {availableColumns.map(col => (
                                     <option key={col} value={col}>{col}</option>
                                 ))}
                             </select>
@@ -452,7 +392,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                     <div className="flex space-x-2">
                         <div className="flex-1">
                             <label className="block text-xs font-bold text-gray-700 mb-1">Metric</label>
-                            <select
+                            <select 
                                 value={measure}
                                 onChange={e => setMeasure(e.target.value as AggregateMethod)}
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
@@ -465,13 +405,13 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                         {measure !== 'count' && (
                             <div className="flex-1">
                                 <label className="block text-xs font-bold text-gray-700 mb-1">Value Col</label>
-                                <select
+                                <select 
                                     value={measureCol}
                                     onChange={e => setMeasureCol(e.target.value)}
                                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
                                 >
                                     <option value="">Select...</option>
-                                    {effectiveColumns.map(col => <option key={col} value={col}>{col}</option>)}
+                                    {availableColumns.map(col => <option key={col} value={col}>{col}</option>)}
                                 </select>
                             </div>
                         )}
