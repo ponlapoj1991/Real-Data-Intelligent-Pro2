@@ -95,16 +95,22 @@ export interface DashboardWidget {
   id: string;
   title: string;
   type: ChartType;
-  
+
   // Data Configuration
   dimension: string;      // X-Axis (Group By) or Text Col for Wordcloud/Table
   stackBy?: string;       // New: For Stacked Bar Charts (e.g. Stack by Sentiment)
   measure: AggregateMethod; // Method e.g., "Count"
   measureCol?: string;    // Y-Axis (Value) or Sort By for Table
   limit?: number;         // Limit rows (Top 10, 20, etc)
-  
+  filters?: DashboardFilter[]; // Per-widget filters (stacked with global filters)
+
   // Visuals
   color?: string;
+  palette?: string[]; // Custom palette per widget
+  seriesColors?: Record<string, string>; // Override by series/category name
+  showValues?: boolean; // Show data labels on charts
+  showLegend?: boolean; // Toggle legend visibility
+  valueFormat?: 'number' | 'compact' | 'percent' | 'currency';
   width: 'half' | 'full'; // Grid span
 }
 

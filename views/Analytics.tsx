@@ -2,7 +2,7 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Project, DashboardWidget, DashboardFilter, DrillDownState, RawRow } from '../types';
 import { 
-    PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, AreaChart, Area 
+    PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, AreaChart, Area, LabelList
 } from 'recharts';
 import { Sparkles, Bot, Loader2, Plus, LayoutGrid, Trash2, Pencil, Filter, X, Presentation, FileOutput, Eye, EyeOff, Table, Download, ChevronRight, MousePointer2, MousePointerClick, MessageSquarePlus, Command } from 'lucide-react';
 import { analyzeProjectData, generateWidgetFromPrompt, DataSummary } from '../utils/ai';
@@ -28,6 +28,25 @@ const getSentimentColor = (key: string, index: number) => {
     if (lower.includes('negative') || lower.includes('bad') || lower.includes('angry')) return '#EF4444'; // Red
     if (lower.includes('neutral') || lower.includes('average')) return '#9CA3AF'; // Gray
     return COLORS[index % COLORS.length];
+};
+
+const getPalette = (widget: DashboardWidget) => {
+    if (widget.palette && widget.palette.length > 0) return widget.palette;
+    return COLORS;
+};
+
+const getWidgetColor = (widget: DashboardWidget, key: string, index: number) => {
+    if (widget.seriesColors && widget.seriesColors[key]) return widget.seriesColors[key];
+    if (widget.stackBy) return getSentimentColor(key, index);
+    const palette = getPalette(widget);
+    return palette[index % palette.length] || widget.color || COLORS[0];
+};
+
+const formatWidgetValue = (widget: DashboardWidget, val: number) => {
+    if (widget.valueFormat === 'percent') return `${(val * 100).toFixed(1)}%`;
+    if (widget.valueFormat === 'currency') return new Intl.NumberFormat('en', { style: 'currency', currency: 'USD', maximumFractionDigits: 1 }).format(val);
+    if (widget.valueFormat === 'compact') return new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(val);
+    return new Intl.NumberFormat('en', { maximumFractionDigits: 2 }).format(val);
 };
 
 const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
@@ -87,6 +106,14 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
           });
       });
   }, [baseData, filters]);
+
+  const applyWidgetFilters = (rows: RawRow[], widgetFilters?: DashboardFilter[]) => {
+      if (!widgetFilters || widgetFilters.length === 0) return rows;
+      return rows.filter(row => widgetFilters.every(f => {
+          if (!f.column || f.value === '') return true;
+          return String(row[f.column] ?? '') === f.value;
+      }));
+  };
 
   // --- Filter Logic ---
 
@@ -236,9 +263,10 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
   // --- Data Processing for Widgets ---
 
   const processWidgetData = (widget: DashboardWidget) => {
+      const widgetData = applyWidgetFilters(filteredData, widget.filters);
       // 1. TABLE WIDGET
       if (widget.type === 'table') {
-          let processed = [...filteredData];
+          let processed = [...widgetData];
           if (widget.measureCol) {
               processed.sort((a, b) => {
                    const valA = a[widget.measureCol!];
@@ -254,8 +282,8 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       if (widget.type === 'bar' && widget.stackBy) {
           const stackKeys = new Set<string>();
           const groups: Record<string, Record<string, number>> = {};
-          
-          filteredData.forEach(row => {
+
+          widgetData.forEach(row => {
               const dimVal = String(row[widget.dimension] || '(Empty)');
               const stackVal = String(row[widget.stackBy!] || '(Other)');
               
@@ -295,7 +323,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       // 3. STANDARD CHARTS
       const groups: Record<string, number> = {};
       
-      filteredData.forEach(row => {
+      widgetData.forEach(row => {
           let groupKey = String(row[widget.dimension]);
           if (row[widget.dimension] === null || row[widget.dimension] === undefined) groupKey = "(Empty)";
 
@@ -327,8 +355,8 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
       let result = Object.keys(groups).map(k => ({
           name: k,
-          value: widget.measure === 'avg' 
-            ? (groups[k] / filteredData.filter(r => String(r[widget.dimension]).includes(k)).length)
+          value: widget.measure === 'avg'
+            ? (groups[k] / widgetData.filter(r => String(r[widget.dimension]).includes(k)).length)
             : groups[k]
       }));
 
@@ -371,46 +399,57 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
   const renderWidget = (widget: DashboardWidget) => {
       const { data, isStack, stackKeys } = processWidgetData(widget);
-      
+      const palette = getPalette(widget);
+      const showLegend = widget.showLegend !== false;
+      const showValues = widget.showValues !== false;
+      const formatTick = (val: number) => formatWidgetValue(widget, val);
+
       if (!data || data.length === 0) return <div className="flex items-center justify-center h-full text-gray-400 text-sm">No Data</div>;
 
       switch (widget.type) {
           case 'bar':
               return (
                   <ResponsiveContainer width="100%" height="100%">
-                      <BarChart 
-                        data={data as any[]} 
-                        layout="vertical" 
-                        margin={{ left: 20, right: 20 }}
-                      >
-                          <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f3f4f6" />
-                          <XAxis type="number" hide />
+                          <BarChart
+                            data={data as any[]}
+                            layout="vertical"
+                            margin={{ left: 20, right: 20 }}
+                          >
+                              <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f3f4f6" />
+                          <XAxis type="number" hide tickFormatter={formatTick} />
                           <YAxis dataKey="name" type="category" width={100} tick={{fontSize: 11}} interval={0} />
                           <Tooltip contentStyle={{borderRadius: '8px'}} cursor={{fill: '#f3f4f6'}} />
-                          <Legend iconType="circle" wrapperStyle={{fontSize: '11px'}} />
-                          
+                          {showLegend && <Legend iconType="circle" wrapperStyle={{fontSize: '11px'}} />}
+
                           {isStack && stackKeys ? (
                               stackKeys.map((key, idx) => (
-                                  <Bar 
-                                    key={key} 
-                                    dataKey={key} 
-                                    stackId="a" 
-                                    fill={getSentimentColor(key, idx)} 
+                                  <Bar
+                                    key={key}
+                                    dataKey={key}
+                                    stackId="a"
+                                    fill={getWidgetColor(widget, key, idx)}
                                     radius={[0,0,0,0]} // Clean stack
                                     barSize={20}
                                     onClick={(data, index, e) => handleChartClick(e, widget, data.name)}
                                     className="cursor-pointer"
-                                  />
+                                  >
+                                      {showValues && <LabelList dataKey={key} position="right" formatter={(val: number) => formatWidgetValue(widget, Number(val) || 0)} />}
+                                  </Bar>
                               ))
                           ) : (
-                                <Bar 
-                                    dataKey="value" 
-                                    fill={widget.color || '#3B82F6'} 
-                                    radius={[0, 4, 4, 0]} 
-                                    barSize={20} 
+                                <Bar
+                                    dataKey="value"
+                                    fill={widget.color || palette[0] || '#3B82F6'}
+                                    radius={[0, 4, 4, 0]}
+                                    barSize={20}
                                     className="cursor-pointer"
                                     onClick={(data, index, e) => handleChartClick(e, widget, data.name)}
-                                />
+                                >
+                                    {(data as any[]).map((entry, idx) => (
+                                        <Cell key={entry.name} fill={getWidgetColor(widget, entry.name, idx)} />
+                                    ))}
+                                    {showValues && <LabelList dataKey="value" position="right" formatter={(val: number) => formatWidgetValue(widget, Number(val) || 0)} />}
+                                </Bar>
                           )}
                       </BarChart>
                   </ResponsiveContainer>
@@ -429,13 +468,15 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                               dataKey="value"
                               className="cursor-pointer outline-none"
                               onClick={(data, index, e) => handleChartClick(e, widget, data.name)}
+                              label={showValues ? ({ name, value }) => `${name}: ${formatWidgetValue(widget, Number(value) || 0)}` : false}
+                              labelLine={showValues}
                           >
                               {(data as any[]).map((entry, index) => (
-                                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                  <Cell key={`cell-${index}`} fill={getWidgetColor(widget, entry.name, index)} />
                               ))}
                           </Pie>
                           <Tooltip contentStyle={{borderRadius: '8px'}} />
-                          <Legend iconType="circle" wrapperStyle={{fontSize: '12px'}} />
+                          {showLegend && <Legend iconType="circle" wrapperStyle={{fontSize: '12px'}} />}
                       </PieChart>
                   </ResponsiveContainer>
               );
@@ -444,36 +485,41 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                const sortedData = [...(data as any[])].sort((a,b) => a.name.localeCompare(b.name));
                const ChartComp = widget.type === 'line' ? LineChart : AreaChart;
                const DataComp = widget.type === 'line' ? Line : Area;
+               const primaryColor = widget.color || palette[0] || '#3B82F6';
                return (
                   <ResponsiveContainer width="100%" height="100%">
-                      <ChartComp 
-                        data={sortedData} 
+                      <ChartComp
+                        data={sortedData}
                         margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
                         onClick={(e) => e && e.activeLabel && handleChartClick(null, widget, e.activeLabel)}
                       >
                           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
                           <XAxis dataKey="name" tick={{fontSize: 11}} />
-                          <YAxis tick={{fontSize: 11}} />
+                          <YAxis tick={{fontSize: 11}} tickFormatter={(val) => formatWidgetValue(widget, Number(val) || 0)} />
                           <Tooltip contentStyle={{borderRadius: '8px'}} />
-                          <DataComp 
-                            type="monotone" 
-                            dataKey="value" 
-                            stroke={widget.color || '#3B82F6'} 
-                            fill={widget.color || '#3B82F6'} 
-                            fillOpacity={0.2} 
+                          <DataComp
+                            type="monotone"
+                            dataKey="value"
+                            stroke={primaryColor}
+                            fill={primaryColor}
+                            fillOpacity={0.2}
                             strokeWidth={2}
                             dot={{r: 4}}
                             activeDot={{r: 6}}
                             className="cursor-pointer"
-                          />
+                          >
+                              {showValues && <LabelList dataKey="value" position="top" formatter={(val: number) => formatWidgetValue(widget, Number(val) || 0)} />}
+                          </DataComp>
+                          {showLegend && <Legend iconType="circle" wrapperStyle={{fontSize: '12px'}} />}
                       </ChartComp>
                   </ResponsiveContainer>
                );
            case 'kpi':
                const total = (data as any[]).reduce((acc, curr) => acc + curr.value, 0);
+               const formattedTotal = formatWidgetValue(widget, total);
                return (
                    <div className="flex flex-col items-center justify-center h-full pb-4">
-                       <span className="text-4xl font-bold text-blue-600">{total.toLocaleString()}</span>
+                       <span className="text-4xl font-bold text-blue-600">{formattedTotal}</span>
                        <span className="text-gray-400 text-sm mt-2">
                           {widget.dimension ? `${widget.measure} of ${widget.dimension}` : `Total ${widget.measure === 'count' ? 'Rows' : 'Value'}`}
                        </span>
