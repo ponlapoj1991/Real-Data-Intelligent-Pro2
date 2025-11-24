@@ -512,6 +512,7 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
 
   const activeSlide = slides[activeSlideIdx];
   const primarySelectedId = Array.from(selectedElementIds)[0];
+  const selectionCount = selectedElementIds.size;
   const primaryElement = activeSlide.elements.find(el => el.id === primarySelectedId);
 
   // --- Click Outside to Close Menu ---
@@ -647,6 +648,102 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
       // Normalize Z
       currentSlide.elements.sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
       currentSlide.elements.forEach((e, i) => e.zIndex = i + 1);
+      updateSlides(newSlides);
+  };
+
+  const alignSelected = (mode: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => {
+      if (selectedElementIds.size < 2) return;
+      const newSlides = [...slides];
+      const slide = newSlides[activeSlideIdx];
+      const selected = slide.elements.filter(el => selectedElementIds.has(el.id));
+      if (!selected.length) return;
+
+      const bounds = selected.reduce((acc, el) => ({
+          minX: Math.min(acc.minX, el.x),
+          maxX: Math.max(acc.maxX, el.x + el.w),
+          minY: Math.min(acc.minY, el.y),
+          maxY: Math.max(acc.maxY, el.y + el.h)
+      }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
+
+      slide.elements = slide.elements.map(el => {
+          if (!selectedElementIds.has(el.id)) return el;
+          let nextX = el.x;
+          let nextY = el.y;
+          if (mode === 'left') nextX = bounds.minX;
+          if (mode === 'center') nextX = (bounds.minX + bounds.maxX) / 2 - el.w / 2;
+          if (mode === 'right') nextX = bounds.maxX - el.w;
+          if (mode === 'top') nextY = bounds.minY;
+          if (mode === 'middle') nextY = (bounds.minY + bounds.maxY) / 2 - el.h / 2;
+          if (mode === 'bottom') nextY = bounds.maxY - el.h;
+          if (showGrid) {
+              nextX = Math.round(nextX / SNAP_GRID) * SNAP_GRID;
+              nextY = Math.round(nextY / SNAP_GRID) * SNAP_GRID;
+          }
+          return { ...el, x: nextX, y: nextY };
+      });
+
+      updateSlides(newSlides);
+  };
+
+  const distributeSelected = (axis: 'horizontal' | 'vertical') => {
+      if (selectedElementIds.size < 3) return;
+      const newSlides = [...slides];
+      const slide = newSlides[activeSlideIdx];
+      const selected = slide.elements.filter(el => selectedElementIds.has(el.id));
+      if (selected.length < 3) return;
+
+      const sorted = [...selected].sort((a, b) => axis === 'horizontal' ? a.x - b.x : a.y - b.y);
+      const first = sorted[0];
+      const last = sorted[sorted.length - 1];
+      const firstCenter = axis === 'horizontal' ? first.x + first.w / 2 : first.y + first.h / 2;
+      const lastCenter = axis === 'horizontal' ? last.x + last.w / 2 : last.y + last.h / 2;
+      const gap = (lastCenter - firstCenter) / (sorted.length - 1);
+
+      const idToElement: Record<string, ReportElement> = {};
+      slide.elements.forEach(el => { idToElement[el.id] = el; });
+
+      sorted.forEach((el, idx) => {
+          const center = firstCenter + gap * idx;
+          if (axis === 'horizontal') {
+              idToElement[el.id] = { ...idToElement[el.id], x: center - el.w / 2 };
+          } else {
+              idToElement[el.id] = { ...idToElement[el.id], y: center - el.h / 2 };
+          }
+      });
+
+      if (showGrid) {
+          Object.keys(idToElement).forEach(id => {
+              const el = idToElement[id];
+              if (!selectedElementIds.has(id)) return;
+              idToElement[id] = {
+                  ...el,
+                  x: Math.round(el.x / SNAP_GRID) * SNAP_GRID,
+                  y: Math.round(el.y / SNAP_GRID) * SNAP_GRID
+              };
+          });
+      }
+
+      slide.elements = slide.elements.map(el => idToElement[el.id]);
+      updateSlides(newSlides);
+  };
+
+  const matchSize = (mode: 'width' | 'height' | 'both') => {
+      if (selectedElementIds.size < 2) return;
+      const newSlides = [...slides];
+      const slide = newSlides[activeSlideIdx];
+      const [baseId] = Array.from(selectedElementIds);
+      const base = slide.elements.find(el => el.id === baseId);
+      if (!base) return;
+
+      slide.elements = slide.elements.map(el => {
+          if (!selectedElementIds.has(el.id) || el.id === baseId) return el;
+          let nextW = el.w;
+          let nextH = el.h;
+          if (mode === 'width' || mode === 'both') nextW = base.w;
+          if (mode === 'height' || mode === 'both') nextH = base.h;
+          return { ...el, w: nextW, h: nextH };
+      });
+
       updateSlides(newSlides);
   };
 
@@ -1779,6 +1876,28 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
                         {/* Ordering */}
                         <button onClick={bringToFront} className="p-1.5 hover:bg-gray-200 rounded text-gray-600" title="Bring to Front"><BringToFront className="w-4 h-4" /></button>
                         <button onClick={sendToBack} className="p-1.5 hover:bg-gray-200 rounded text-gray-600" title="Send to Back"><SendToBack className="w-4 h-4" /></button>
+
+                        <div className="w-px h-5 bg-gray-300 mx-1"></div>
+
+                        {/* Align & Distribute */}
+                        <button disabled={selectionCount < 2} onClick={() => alignSelected('left')} className={`p-1.5 rounded ${selectionCount < 2 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Align Left"><AlignLeft className="w-4 h-4" /></button>
+                        <button disabled={selectionCount < 2} onClick={() => alignSelected('center')} className={`p-1.5 rounded ${selectionCount < 2 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Align Center"><AlignCenter className="w-4 h-4" /></button>
+                        <button disabled={selectionCount < 2} onClick={() => alignSelected('right')} className={`p-1.5 rounded ${selectionCount < 2 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Align Right"><AlignRight className="w-4 h-4" /></button>
+                        <button disabled={selectionCount < 2} onClick={() => alignSelected('top')} className={`p-1.5 rounded ${selectionCount < 2 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Align Top"><Move className="w-4 h-4 rotate-90" /></button>
+                        <button disabled={selectionCount < 2} onClick={() => alignSelected('middle')} className={`p-1.5 rounded ${selectionCount < 2 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Align Middle"><Move className="w-4 h-4 rotate-45" /></button>
+                        <button disabled={selectionCount < 2} onClick={() => alignSelected('bottom')} className={`p-1.5 rounded ${selectionCount < 2 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Align Bottom"><Move className="w-4 h-4" /></button>
+                        <button disabled={selectionCount < 3} onClick={() => distributeSelected('horizontal')} className={`px-2 py-1 rounded text-[11px] font-medium ${selectionCount < 3 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Distribute Horizontally">H⇆</button>
+                        <button disabled={selectionCount < 3} onClick={() => distributeSelected('vertical')} className={`px-2 py-1 rounded text-[11px] font-medium ${selectionCount < 3 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Distribute Vertically">V⇆</button>
+
+                        <div className="w-px h-5 bg-gray-300 mx-1"></div>
+
+                        {/* Match Size */}
+                        <button disabled={selectionCount < 2} onClick={() => matchSize('width')} className={`px-2 py-1 rounded text-[11px] font-medium ${selectionCount < 2 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Match Width">W=</button>
+                        <button disabled={selectionCount < 2} onClick={() => matchSize('height')} className={`px-2 py-1 rounded text-[11px] font-medium ${selectionCount < 2 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Match Height">H=</button>
+                        <button disabled={selectionCount < 2} onClick={() => matchSize('both')} className={`px-2 py-1 rounded text-[11px] font-medium ${selectionCount < 2 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Match Width & Height">W/H</button>
+
+                        <div className="w-px h-5 bg-gray-300 mx-1"></div>
+
                         <button onClick={deleteSelection} className="p-1.5 hover:bg-red-50 text-red-500 rounded" title="Delete"><Trash2 className="w-4 h-4" /></button>
                     </>
                  )}
