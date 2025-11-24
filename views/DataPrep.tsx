@@ -1,837 +1,678 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { Settings, Download, Save, Search, X, Eraser, Trash2, Replace, ArrowRight, Zap, Calendar, Split, Table2, Database, Plus, GripVertical, Check, ListFilter, ChevronUp, ChevronDown, Pencil } from 'lucide-react';
-import { Project, RawRow, ColumnConfig, TransformationRule, TransformMethod } from '../types';
+import React, { useState, useEffect } from 'react';
+import { FileSpreadsheet, Plus, Edit2, Trash2, Clock, Database, Settings, Layers, Download } from 'lucide-react';
+import { Project, PrepConfig, MergingStrategy, RawTable } from '../types';
 import { saveProject } from '../utils/storage';
-import { exportToExcel, smartParseDate } from '../utils/excel';
-import { analyzeSourceColumn, applyTransformation, getAllUniqueValues } from '../utils/transform';
+import { unionTables, getMergeStatistics } from '../utils/dataMerge';
 import EmptyState from '../components/EmptyState';
+import { exportToExcel, inferColumns } from '../utils/excel';
 
-interface DataPrepProps {
+interface Props {
   project: Project;
-  onUpdateProject: (p: Project) => void;
+  onUpdateProject: (updated: Project) => void;
 }
 
-type Mode = 'clean' | 'build';
+const DataPrep: React.FC<Props> = ({ project, onUpdateProject }) => {
+  const [prepConfigs, setPrepConfigs] = useState<PrepConfig[]>(project.prepConfigs || []);
+  const [rawTables] = useState<RawTable[]>(project.rawTables || []);
+  const [loading, setLoading] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [selectedConfig, setSelectedConfig] = useState<PrepConfig | null>(null);
 
-const DataPrep: React.FC<DataPrepProps> = ({ project, onUpdateProject }) => {
-  const [mode, setMode] = useState<Mode>('clean');
-  const [isSaving, setIsSaving] = useState(false);
-
-  // --- CLEAN MODE STATES ---
-  const [editingCol, setEditingCol] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [activeToolMode, setActiveToolMode] = useState<'none' | 'cleaner' | 'transform'>('none');
-  const [findText, setFindText] = useState('');
-  const [replaceText, setReplaceText] = useState('');
-  const [targetCol, setTargetCol] = useState<string>('all');
-  const [transformAction, setTransformAction] = useState<'date' | 'explode'>('date');
-  const [transformCol, setTransformCol] = useState<string>('');
-  const [delimiter, setDelimiter] = useState<string>(',');
-
-  // --- BUILD MODE STATES ---
-  const [rules, setRules] = useState<TransformationRule[]>(project.transformRules || []);
-  const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
-  const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
-  
-  // New Rule Form
-  const [newRuleName, setNewRuleName] = useState('');
-  const [selectedSourceCol, setSelectedSourceCol] = useState('');
-  const [sourceAnalysis, setSourceAnalysis] = useState<{ isArrayLikely: boolean, isDateLikely: boolean, uniqueTags: string[], sampleValues: string[] } | null>(null);
-  const [selectedMethod, setSelectedMethod] = useState<TransformMethod>('copy');
-  const [methodParams, setMethodParams] = useState<any>({});
-  const [valueMap, setValueMap] = useState<Record<string, string>>({});
-  
-  // Manual Map State
-  const [manualMapKey, setManualMapKey] = useState('');
-  const [manualMapValue, setManualMapValue] = useState('');
-
-  // Computed Structured Data
-  const structuredData = useMemo(() => {
-      if (mode === 'build' && rules.length > 0) {
-          return applyTransformation(project.data, rules);
-      }
-      return [];
-  }, [project.data, rules, mode]);
-
-  // Sync Rules to Project
+  // Sync prepConfigs with project
   useEffect(() => {
-      if (JSON.stringify(project.transformRules) !== JSON.stringify(rules)) {
-         // Keep local state in sync
+    setPrepConfigs(project.prepConfigs || []);
+  }, [project.prepConfigs]);
+
+  const handleCreateConfig = async (
+    name: string,
+    description: string,
+    selectedTableIds: string[]
+  ) => {
+    setLoading(true);
+    try {
+      // Get selected tables
+      const selectedTables = rawTables.filter(t => selectedTableIds.includes(t.id));
+
+      if (selectedTables.length === 0) {
+        alert('Please select at least one table');
+        setLoading(false);
+        return;
       }
-  }, [rules, project.transformRules]);
 
-  // --- SHARED FUNCTIONS ---
-  const safeRender = (val: any) => {
-    if (typeof val === 'object' && val !== null) return JSON.stringify(val);
-    if (val === null || val === undefined) return '';
-    if (typeof val === 'boolean') return val ? 'TRUE' : 'FALSE';
-    return String(val);
-  };
+      // Union tables
+      const { data, columns } = unionTables(selectedTables);
 
-  const handleManualSave = async () => {
-      setIsSaving(true);
-      const updatedProject = { ...project, transformRules: rules };
-      onUpdateProject(updatedProject);
-      await saveProject(updatedProject);
-      setTimeout(() => setIsSaving(false), 800);
-  };
+      // Create column configs
+      const columnConfigs = columns.map(col => ({
+        key: col,
+        type: 'string' as const,
+        visible: true,
+        label: col,
+      }));
 
-  const handleExport = () => {
-      if (mode === 'clean') {
-        exportToExcel(project.data, `${project.name}_Raw_Cleaned`);
-      } else {
-        exportToExcel(structuredData, `${project.name}_Structured`);
-      }
-  };
-
-  // --- CLEAN MODE FUNCTIONS ---
-  const updateColumnType = async (key: string, type: ColumnConfig['type']) => {
-    const newCols = project.columns.map(c => c.key === key ? { ...c, type } : c);
-    const updatedProject = { ...project, columns: newCols };
-    onUpdateProject(updatedProject);
-    setEditingCol(null);
-    await saveProject(updatedProject);
-  };
-
-  const handleFindReplace = async () => {
-    if (!findText) return;
-    const newData = project.data.map(row => {
-        const newRow = { ...row };
-        const colsToSearch = targetCol === 'all' ? project.columns.map(c => c.key) : [targetCol];
-        colsToSearch.forEach(key => {
-            const val = newRow[key];
-            if (typeof val === 'string' && val.includes(findText)) {
-                newRow[key] = val.split(findText).join(replaceText);
-            }
-        });
-        return newRow;
-    });
-    const updatedProject = { ...project, data: newData };
-    onUpdateProject(updatedProject);
-    await saveProject(updatedProject);
-  };
-
-  const handleTransform = async () => {
-    if (!transformCol) return;
-    let newData = [...project.data];
-    let newCols = [...project.columns];
-
-    if (transformAction === 'date') {
-        newData = newData.map(row => {
-            const val = row[transformCol];
-            if (typeof val === 'string') {
-                const parsed = smartParseDate(val);
-                return { ...row, [transformCol]: parsed || val };
-            }
-            return row;
-        });
-        newCols = newCols.map(c => c.key === transformCol ? { ...c, type: 'date' } : c);
-    } else if (transformAction === 'explode') {
-        newData = newData.map(row => {
-            const val = row[transformCol];
-            if (typeof val === 'string') {
-                const parts = val.split(delimiter).map(s => s.trim()).filter(s => s);
-                return { ...row, [transformCol]: JSON.stringify(parts) };
-            }
-            return row;
-        });
-        newCols = newCols.map(c => c.key === transformCol ? { ...c, type: 'tag_array' } : c);
-    }
-    const updatedProject = { ...project, data: newData, columns: newCols };
-    onUpdateProject(updatedProject);
-    await saveProject(updatedProject);
-    setTransformCol('');
-  };
-
-  const handleDeleteRow = async (index: number) => {
-    const newData = project.data.filter((_, i) => i !== index);
-    const updatedProject = { ...project, data: newData };
-    onUpdateProject(updatedProject);
-    await saveProject(updatedProject);
-  };
-
-  // --- BUILD MODE FUNCTIONS ---
-  const handleSourceColSelect = (colKey: string) => {
-      setSelectedSourceCol(colKey);
-      const analysis = analyzeSourceColumn(project.data, colKey);
-      setSourceAnalysis(analysis);
-      
-      // Smart Default logic, only if we are NOT editing an existing rule
-      if (!editingRuleId) {
-          if (analysis.isDateLikely) {
-              setSelectedMethod('date_extract');
-              setMethodParams({ datePart: 'date_only' });
-          } else if (analysis.isArrayLikely) {
-              setSelectedMethod('array_count');
-              setMethodParams({});
-          } else {
-              setSelectedMethod('copy');
-              setMethodParams({});
-          }
-          setValueMap({});
-      }
-  };
-
-  const openAddModal = () => {
-      setEditingRuleId(null);
-      setNewRuleName('');
-      setSelectedSourceCol('');
-      setSourceAnalysis(null);
-      setSelectedMethod('copy');
-      setMethodParams({});
-      setValueMap({});
-      setManualMapKey('');
-      setManualMapValue('');
-      setIsRuleModalOpen(true);
-  };
-
-  const openEditModal = (rule: TransformationRule) => {
-      setEditingRuleId(rule.id);
-      setNewRuleName(rule.targetName);
-      setSelectedSourceCol(rule.sourceKey);
-      setSelectedMethod(rule.method);
-      setMethodParams(rule.params || {});
-      setValueMap(rule.valueMap || {});
-      
-      // Run analysis to populate preview/options
-      const analysis = analyzeSourceColumn(project.data, rule.sourceKey);
-      setSourceAnalysis(analysis);
-
-      setIsRuleModalOpen(true);
-  };
-
-  const saveRule = () => {
-      if (!newRuleName || !selectedSourceCol) return;
-      
-      const newRule: TransformationRule = {
-          id: editingRuleId || crypto.randomUUID(),
-          targetName: newRuleName,
-          sourceKey: selectedSourceCol,
-          method: selectedMethod,
-          params: methodParams,
-          valueMap: Object.keys(valueMap).length > 0 ? valueMap : undefined
+      // Create new PrepConfig
+      const newConfig: PrepConfig = {
+        id: crypto.randomUUID(),
+        name,
+        description,
+        sourceTableIds: selectedTableIds,
+        mergingStrategy: MergingStrategy.UNION,
+        transformRules: [],
+        outputData: data,
+        outputColumns: columnConfigs,
+        createdAt: Date.now(),
+        lastModified: Date.now(),
       };
 
-      if (editingRuleId) {
-          setRules(rules.map(r => r.id === editingRuleId ? newRule : r));
-      } else {
-          setRules([...rules, newRule]);
+      // Update project
+      const updatedConfigs = [...prepConfigs, newConfig];
+      const updatedProject = {
+        ...project,
+        prepConfigs: updatedConfigs,
+      };
+
+      await saveProject(updatedProject);
+      onUpdateProject(updatedProject);
+      setPrepConfigs(updatedConfigs);
+      setShowCreateModal(false);
+
+      console.log('✅ Config created:', name, `(${data.length} rows, ${columns.length} columns)`);
+    } catch (error) {
+      console.error('Failed to create config:', error);
+      alert('Failed to create configuration');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpdateConfig = async (
+    configId: string,
+    selectedTableIds: string[]
+  ) => {
+    setLoading(true);
+    try {
+      const selectedTables = rawTables.filter(t => selectedTableIds.includes(t.id));
+
+      if (selectedTables.length === 0) {
+        alert('Please select at least one table');
+        setLoading(false);
+        return;
       }
 
-      setIsRuleModalOpen(false);
-      
-      // Reset Form
-      setNewRuleName('');
-      setSelectedSourceCol('');
-      setSourceAnalysis(null);
-      setValueMap({});
-      setManualMapKey('');
-      setManualMapValue('');
+      // Union tables
+      const { data, columns } = unionTables(selectedTables);
+
+      // Create column configs
+      const columnConfigs = columns.map(col => ({
+        key: col,
+        type: 'string' as const,
+        visible: true,
+        label: col,
+      }));
+
+      // Update config
+      const updatedConfigs = prepConfigs.map(config => {
+        if (config.id === configId) {
+          return {
+            ...config,
+            sourceTableIds: selectedTableIds,
+            outputData: data,
+            outputColumns: columnConfigs,
+            lastModified: Date.now(),
+          };
+        }
+        return config;
+      });
+
+      const updatedProject = {
+        ...project,
+        prepConfigs: updatedConfigs,
+      };
+
+      await saveProject(updatedProject);
+      onUpdateProject(updatedProject);
+      setPrepConfigs(updatedConfigs);
+      setShowEditModal(false);
+
+      console.log('✅ Config updated:', configId);
+    } catch (error) {
+      console.error('Failed to update config:', error);
+      alert('Failed to update configuration');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const removeRule = (id: string) => {
-      setRules(rules.filter(r => r.id !== id));
-  };
-  
-  const moveRule = (index: number, direction: 'up' | 'down') => {
-      if (direction === 'up' && index === 0) return;
-      if (direction === 'down' && index === rules.length - 1) return;
-      
-      const newRules = [...rules];
-      const swapIndex = direction === 'up' ? index - 1 : index + 1;
-      [newRules[index], newRules[swapIndex]] = [newRules[swapIndex], newRules[index]];
-      setRules(newRules);
-  };
+  const handleDeleteConfig = async (configId: string, configName: string) => {
+    if (!confirm(`Are you sure you want to delete "${configName}"? This action cannot be undone.`)) {
+      return;
+    }
 
-  const handleAddManualMap = () => {
-      if (manualMapKey && manualMapValue) {
-          setValueMap({ ...valueMap, [manualMapKey]: manualMapValue });
-          setManualMapKey('');
-          setManualMapValue('');
-      }
+    const updatedConfigs = prepConfigs.filter(c => c.id !== configId);
+    const updatedProject = {
+      ...project,
+      prepConfigs: updatedConfigs,
+    };
+
+    await saveProject(updatedProject);
+    onUpdateProject(updatedProject);
+    setPrepConfigs(updatedConfigs);
+
+    console.log('✅ Config deleted:', configName);
   };
 
-  // UPDATED: More robust extraction of values for mapping
-  const uniqueValuesForMapping = useMemo(() => {
-      if (!selectedSourceCol) return [];
-      // Use the comprehensive scan function here, scanning up to 5000 rows
-      return getAllUniqueValues(project.data, selectedSourceCol, selectedMethod, 5000);
-  }, [selectedSourceCol, selectedMethod, project.data]);
-
-  // Clean Mode Filter Logic
-  const filteredRawData = useMemo(() => {
-    if (!searchQuery.trim()) return project.data;
-    const lowerQuery = searchQuery.toLowerCase();
-    return project.data.filter(row => Object.values(row).some(val => String(val).toLowerCase().includes(lowerQuery)));
-  }, [project.data, searchQuery]);
-
-  const displayRawData = useMemo(() => filteredRawData.slice(0, 50), [filteredRawData]);
+  const handleExportConfig = (config: PrepConfig) => {
+    exportToExcel(config.outputData, `${project.name}_${config.name}`);
+  };
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
-      
-      {/* Top Header */}
-      <div className="bg-white border-b border-gray-200 px-8 py-4 flex justify-between items-center flex-shrink-0">
-        <div className="flex items-center space-x-6">
-            <div>
-                <h2 className="text-2xl font-bold text-gray-900">Data Preparation</h2>
-                <p className="text-gray-500 text-sm">Clean raw data or build your structured report.</p>
-            </div>
-            <div className="h-10 w-px bg-gray-200"></div>
-            <div className="flex bg-gray-100 p-1 rounded-lg">
-                <button 
-                    onClick={() => setMode('clean')}
-                    className={`flex items-center px-4 py-2 rounded-md text-sm font-medium transition-all ${mode === 'clean' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
-                >
-                    <Database className="w-4 h-4 mr-2" />
-                    Clean Raw Data
-                </button>
-                <button 
-                    onClick={() => setMode('build')}
-                    className={`flex items-center px-4 py-2 rounded-md text-sm font-medium transition-all ${mode === 'build' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
-                >
-                    <Table2 className="w-4 h-4 mr-2" />
-                    Build Structure
-                </button>
-            </div>
-        </div>
-        
-        <div className="flex space-x-3">
-             <button onClick={handleExport} className="flex items-center space-x-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors shadow-sm">
-                <Download className="w-4 h-4" />
-                <span>Export {mode === 'build' ? 'Structure' : 'Raw'}</span>
-            </button>
-             <button 
-                onClick={handleManualSave}
-                disabled={isSaving}
-                className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors shadow-sm disabled:opacity-50">
-                <Save className="w-4 h-4" />
-                <span>{isSaving ? 'Saving...' : 'Save Project'}</span>
-            </button>
+    <div className="h-full flex flex-col bg-gray-50">
+      {/* Header */}
+      <div className="bg-white border-b border-gray-200 px-8 py-6 flex-shrink-0">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
+              <div className="p-2 bg-blue-50 rounded-lg">
+                <FileSpreadsheet className="w-6 h-6 text-blue-600" />
+              </div>
+              Clean & Prep Configurations
+            </h1>
+            <p className="text-sm text-gray-500 mt-2">
+              Processing factory - Create recipes to transform and merge your data
+            </p>
+          </div>
+          <button
+            onClick={() => setShowCreateModal(true)}
+            disabled={loading || rawTables.length === 0}
+            className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Plus className="w-4 h-4" />
+            Create Configuration
+          </button>
         </div>
       </div>
 
-      {/* ==================== CLEAN MODE UI ==================== */}
-      {mode === 'clean' && (
-        <div className="flex-1 flex flex-col overflow-hidden animate-in fade-in duration-300">
-            {/* Toolbar */}
-            <div className="px-8 py-3 bg-white border-b border-gray-200 flex items-center justify-between">
-                 <div className="flex space-x-3">
-                    <button 
-                        onClick={() => setActiveToolMode(activeToolMode === 'cleaner' ? 'none' : 'cleaner')}
-                        className={`flex items-center space-x-2 px-3 py-1.5 border rounded-md text-sm transition-colors ${activeToolMode === 'cleaner' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-300 text-gray-700'}`}
-                    >
-                        <Eraser className="w-3.5 h-3.5" /><span>Find & Replace</span>
-                    </button>
-                    <button 
-                        onClick={() => setActiveToolMode(activeToolMode === 'transform' ? 'none' : 'transform')}
-                        className={`flex items-center space-x-2 px-3 py-1.5 border rounded-md text-sm transition-colors ${activeToolMode === 'transform' ? 'bg-purple-50 border-purple-200 text-purple-700' : 'bg-white border-gray-300 text-gray-700'}`}
-                    >
-                        <Zap className="w-3.5 h-3.5" /><span>Auto Transform</span>
-                    </button>
-                 </div>
-                 <div className="relative w-64">
-                     <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                     <input 
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Search raw data..."
-                        className="w-full pl-9 pr-4 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
-                     />
-                 </div>
-            </div>
-
-            {/* Tool Panels */}
-            {activeToolMode === 'cleaner' && (
-                <div className="px-8 py-4 bg-blue-50 border-b border-blue-100 flex items-center space-x-4">
-                    <span className="text-sm font-semibold text-blue-800">Find & Replace:</span>
-                    <input className="px-2 py-1 text-sm border rounded w-40" placeholder="Find" value={findText} onChange={e => setFindText(e.target.value)} />
-                    <ArrowRight className="w-4 h-4 text-blue-400" />
-                    <input className="px-2 py-1 text-sm border rounded w-40" placeholder="Replace" value={replaceText} onChange={e => setReplaceText(e.target.value)} />
-                    <select className="px-2 py-1 text-sm border rounded" value={targetCol} onChange={e => setTargetCol(e.target.value)}>
-                        <option value="all">All Columns</option>
-                        {project.columns.map(c => <option key={c.key} value={c.key}>{c.key}</option>)}
-                    </select>
-                    <button onClick={handleFindReplace} className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">Execute</button>
-                </div>
-            )}
-
-            {activeToolMode === 'transform' && (
-                <div className="px-8 py-4 bg-purple-50 border-b border-purple-100 flex items-center space-x-4">
-                    <span className="text-sm font-semibold text-purple-800">Transform:</span>
-                    <div className="flex bg-white rounded border p-0.5">
-                        <button onClick={() => setTransformAction('date')} className={`px-3 py-1 text-xs font-medium rounded ${transformAction === 'date' ? 'bg-purple-100 text-purple-800' : 'text-gray-500'}`}>Date</button>
-                        <button onClick={() => setTransformAction('explode')} className={`px-3 py-1 text-xs font-medium rounded ${transformAction === 'explode' ? 'bg-purple-100 text-purple-800' : 'text-gray-500'}`}>Explode Tags</button>
-                    </div>
-                    <select className="px-2 py-1 text-sm border rounded w-40" value={transformCol} onChange={e => setTransformCol(e.target.value)}>
-                        <option value="">Select Column</option>
-                        {project.columns.map(c => <option key={c.key} value={c.key}>{c.key}</option>)}
-                    </select>
-                    {transformAction === 'explode' && (
-                        <input className="px-2 py-1 text-sm border rounded w-20" placeholder="Delimiter" value={delimiter} onChange={e => setDelimiter(e.target.value)} />
-                    )}
-                    <button onClick={handleTransform} className="px-3 py-1 bg-purple-600 text-white text-sm rounded hover:bg-purple-700">Apply</button>
-                </div>
-            )}
-
-            {/* Clean Table */}
-            <div className="flex-1 overflow-auto relative bg-white">
-                <table className="w-full text-sm text-left text-gray-600">
-                    <thead className="text-xs text-gray-700 uppercase bg-gray-50 sticky top-0 z-10">
-                        <tr>
-                            <th className="px-4 py-3 w-10 border-b border-gray-200">#</th>
-                            {project.columns.map(col => (
-                                <th key={col.key} className="px-6 py-3 border-b border-gray-200 font-bold whitespace-nowrap min-w-[150px]">
-                                    <div className="flex items-center justify-between">
-                                        <span>{col.key}</span>
-                                        <button onClick={() => setEditingCol(editingCol === col.key ? null : col.key)}><Settings className="w-3 h-3 text-gray-400" /></button>
-                                    </div>
-                                    {editingCol === col.key && (
-                                        <div className="absolute mt-2 bg-white border shadow-lg rounded p-2 z-20">
-                                            <select 
-                                                className="text-xs p-1 border rounded w-full"
-                                                value={col.type}
-                                                onChange={(e) => updateColumnType(col.key, e.target.value as any)}
-                                            >
-                                                <option value="string">String</option>
-                                                <option value="number">Number</option>
-                                                <option value="date">Date</option>
-                                                <option value="tag_array">Tag Array</option>
-                                            </select>
-                                        </div>
-                                    )}
-                                </th>
-                            ))}
-                            <th className="px-4 py-3 border-b border-gray-200 w-10"></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {displayRawData.map((row, idx) => (
-                            <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50">
-                                <td className="px-4 py-3 text-xs font-mono text-gray-400">{idx + 1}</td>
-                                {project.columns.map(col => (
-                                    <td key={col.key} className="px-6 py-3 truncate max-w-xs" title={String(row[col.key])}>
-                                        {safeRender(row[col.key])}
-                                    </td>
-                                ))}
-                                <td className="px-4 py-3 text-center">
-                                    <button onClick={() => handleDeleteRow(idx)} className="text-gray-300 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-      )}
-
-      {/* ==================== BUILD MODE UI ==================== */}
-      {mode === 'build' && (
-          <div className="flex-1 flex overflow-hidden animate-in fade-in duration-300">
-              
-              {/* Left: Configuration Panel */}
-              <div className="w-80 bg-white border-r border-gray-200 flex flex-col z-10 shadow-lg">
-                  <div className="p-5 border-b border-gray-200 bg-gray-50">
-                      <h3 className="font-bold text-gray-800 flex items-center">
-                          <Table2 className="w-4 h-4 mr-2 text-blue-600" />
-                          Table Structure
-                      </h3>
-                      <p className="text-xs text-gray-500 mt-1">Define columns for your report.</p>
-                  </div>
-                  
-                  <div className="flex-1 overflow-y-auto p-3 space-y-2">
-                      {rules.length === 0 && (
-                          <div className="h-full flex flex-col justify-center p-4">
-                            <EmptyState 
-                                icon={Table2} 
-                                title="No Columns Defined" 
-                                description="Start by adding columns to structure your raw data into a clean report format."
-                                actionLabel="Add First Column"
-                                onAction={openAddModal}
-                                className="border-0 bg-transparent"
-                            />
-                          </div>
-                      )}
-                      {rules.map((rule, idx) => (
-                          <div key={rule.id} className="bg-white border border-gray-200 rounded-lg p-3 shadow-sm hover:border-blue-300 group relative transition-all">
-                              {/* Action Buttons */}
-                              <div className="absolute right-2 top-2 flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity bg-white pl-2 shadow-sm rounded-lg border border-gray-100">
-                                   <button onClick={() => openEditModal(rule)} className="p-1.5 hover:bg-blue-50 rounded text-gray-400 hover:text-blue-600" title="Edit Column">
-                                      <Pencil className="w-3 h-3" />
-                                  </button>
-                                  <div className="w-px h-3 bg-gray-200"></div>
-                                  <button onClick={() => moveRule(idx, 'up')} disabled={idx === 0} className="p-1.5 hover:bg-gray-100 rounded text-gray-400 hover:text-blue-600 disabled:opacity-30">
-                                      <ChevronUp className="w-3 h-3" />
-                                  </button>
-                                  <button onClick={() => moveRule(idx, 'down')} disabled={idx === rules.length - 1} className="p-1.5 hover:bg-gray-100 rounded text-gray-400 hover:text-blue-600 disabled:opacity-30">
-                                      <ChevronDown className="w-3 h-3" />
-                                  </button>
-                                  <div className="w-px h-3 bg-gray-200"></div>
-                                  <button onClick={() => removeRule(rule.id)} className="p-1.5 hover:bg-red-50 rounded text-gray-400 hover:text-red-500" title="Remove">
-                                      <X className="w-3 h-3" />
-                                  </button>
-                              </div>
-
-                              <div className="mb-1 pr-16">
-                                  <span className="font-bold text-gray-800 text-sm truncate block" title={rule.targetName}>{rule.targetName}</span>
-                              </div>
-                              <div className="text-xs text-gray-500 flex items-center">
-                                  <ArrowRight className="w-3 h-3 mr-1" />
-                                  From: <span className="font-medium bg-gray-100 px-1 rounded mx-1 text-gray-700 truncate max-w-[100px]" title={rule.sourceKey}>{rule.sourceKey}</span>
-                              </div>
-                              <div className="flex items-center justify-between mt-2">
-                                <div className="text-[10px] uppercase tracking-wider font-semibold text-blue-600 bg-blue-50 inline-block px-1.5 py-0.5 rounded">
-                                    {rule.method.replace('array_', '').replace('_', ' ')}
-                                </div>
-                                {rule.valueMap && (
-                                    <div className="text-[10px] font-semibold text-green-600 bg-green-50 px-1.5 py-0.5 rounded flex items-center">
-                                        <Replace className="w-3 h-3 mr-1" /> Mapped
-                                    </div>
-                                )}
-                              </div>
-                          </div>
-                      ))}
-                  </div>
-
-                  <div className="p-4 border-t border-gray-200 bg-gray-50">
-                      <button 
-                        onClick={openAddModal}
-                        className="w-full py-2 bg-blue-600 text-white rounded-lg font-medium text-sm hover:bg-blue-700 transition-colors flex items-center justify-center"
-                      >
-                          <Plus className="w-4 h-4 mr-2" /> Add Column
-                      </button>
-                  </div>
-              </div>
-
-              {/* Right: Preview Panel */}
-              <div className="flex-1 bg-gray-100 flex flex-col overflow-hidden">
-                  <div className="px-6 py-3 bg-white border-b border-gray-200 flex justify-between items-center shadow-sm z-10">
-                      <span className="text-sm font-semibold text-gray-700">Live Preview (Top 50 rows)</span>
-                      <span className="text-xs text-gray-400">{structuredData.length} rows generated</span>
-                  </div>
-                  
-                  <div className="flex-1 overflow-auto p-6">
-                      <div className="bg-white shadow-sm border border-gray-200 rounded-lg overflow-hidden min-h-[200px]">
-                          {rules.length === 0 ? (
-                              <div className="flex items-center justify-center h-64 text-gray-400 flex-col">
-                                  <Table2 className="w-12 h-12 mb-3 opacity-20" />
-                                  <p>Your structured table is empty.</p>
-                              </div>
-                          ) : (
-                              <table className="w-full text-sm text-left">
-                                  <thead className="text-xs text-gray-700 uppercase bg-gray-50 border-b border-gray-200">
-                                      <tr>
-                                          <th className="px-6 py-3 w-12">#</th>
-                                          {rules.map(r => (
-                                              <th key={r.id} className="px-6 py-3 border-r border-gray-100 last:border-0 whitespace-nowrap">{r.targetName}</th>
-                                          ))}
-                                      </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-gray-100">
-                                      {structuredData.slice(0, 50).map((row, idx) => (
-                                          <tr key={idx} className="hover:bg-blue-50/30 transition-colors">
-                                              <td className="px-6 py-3 text-gray-400 text-xs font-mono">{idx + 1}</td>
-                                              {rules.map(r => (
-                                                  <td key={r.id} className="px-6 py-3 text-gray-700 border-r border-gray-50 last:border-0 truncate max-w-xs" title={safeRender(row[r.targetName])}>
-                                                      {safeRender(row[r.targetName])}
-                                                  </td>
-                                              ))}
-                                          </tr>
-                                      ))}
-                                  </tbody>
-                              </table>
+      {/* Config List */}
+      <div className="flex-1 overflow-auto p-8">
+        {rawTables.length === 0 ? (
+          <EmptyState
+            icon={Database}
+            title="No data sources available"
+            description="Please add tables in the Database tab first before creating configurations."
+            actionLabel="Go to Database"
+            onAction={() => {
+              // Navigation handled by parent
+            }}
+          />
+        ) : prepConfigs.length === 0 ? (
+          <EmptyState
+            icon={FileSpreadsheet}
+            title="No configurations yet"
+            description="Create your first configuration to start processing and transforming your data."
+            actionLabel="Create Configuration"
+            onAction={() => setShowCreateModal(true)}
+          />
+        ) : (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    No.
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Configuration Name
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Source Tables
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Output Rows
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Output Columns
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Last Modified
+                  </th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {prepConfigs.map((config, index) => (
+                  <tr key={config.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-6 py-4 text-sm text-gray-500">
+                      {index + 1}
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-2">
+                        <Layers className="w-4 h-4 text-blue-600" />
+                        <div>
+                          <div className="font-medium text-gray-900">{config.name}</div>
+                          {config.description && (
+                            <div className="text-xs text-gray-500">{config.description}</div>
                           )}
+                        </div>
                       </div>
-                  </div>
-              </div>
-
-              {/* Add Rule Modal */}
-              {isRuleModalOpen && (
-                  <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                      <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden animate-in zoom-in duration-200 flex max-h-[90vh]">
-                          
-                          {/* Left Side: Configuration */}
-                          <div className="w-1/2 flex flex-col border-r border-gray-200">
-                            <div className="px-6 py-4 border-b border-gray-100 bg-gray-50">
-                                <h3 className="font-bold text-lg text-gray-800">
-                                    {editingRuleId ? 'Edit Column' : 'Add Column'}
-                                </h3>
-                            </div>
-                            
-                            <div className="p-6 overflow-y-auto custom-scrollbar space-y-5 flex-1">
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Target Column Name</label>
-                                    <input 
-                                        autoFocus
-                                        value={newRuleName}
-                                        onChange={e => setNewRuleName(e.target.value)}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                                        placeholder="e.g. Date Only, Main Tag"
-                                    />
-                                </div>
-
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Source from Raw Data</label>
-                                    <select 
-                                        value={selectedSourceCol}
-                                        onChange={e => handleSourceColSelect(e.target.value)}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                                    >
-                                        <option value="">-- Select Source --</option>
-                                        {project.columns.map(c => <option key={c.key} value={c.key}>{c.key}</option>)}
-                                    </select>
-                                </div>
-
-                                {selectedSourceCol && (
-                                    <div className="bg-blue-50 p-3 rounded-lg border border-blue-100 text-xs">
-                                        <p className="font-semibold text-blue-800 mb-1">AI Detection:</p>
-                                        {sourceAnalysis?.isArrayLikely ? (
-                                            <div className="flex items-center text-blue-700"><Split className="w-3 h-3 mr-1" /> Array/List Format</div>
-                                        ) : sourceAnalysis?.isDateLikely ? (
-                                            <div className="flex items-center text-blue-700"><Calendar className="w-3 h-3 mr-1" /> Date/Time Format</div>
-                                        ) : (
-                                            <div className="flex items-center text-gray-600">Simple Text Format</div>
-                                        )}
-                                    </div>
-                                )}
-
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Extraction Logic</label>
-                                    <select 
-                                        value={selectedMethod}
-                                        onChange={e => {
-                                            setSelectedMethod(e.target.value as TransformMethod);
-                                            if (e.target.value === 'date_extract' && !methodParams.datePart) {
-                                                setMethodParams({...methodParams, datePart: 'date_only'});
-                                            }
-                                        }}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                                    >
-                                        <option value="copy">Direct Copy</option>
-                                        <option value="array_count">Count Items</option>
-                                        <option value="array_extract">Extract Item by Index</option>
-                                        <option value="array_join">Join to String</option>
-                                        <option value="array_includes">Check Presence (Boolean)</option>
-                                        <option value="date_extract">Extract Date/Time</option>
-                                    </select>
-                                    <p className="text-[10px] text-gray-400 mt-1">
-                                        * All array methods support single numeric/text values by treating them as a list of one.
-                                    </p>
-                                </div>
-
-                                {/* Dynamic Params */}
-                                {selectedMethod === 'array_extract' && (
-                                    <div>
-                                        <label className="block text-xs font-medium text-gray-500 mb-1">Index (0 = First)</label>
-                                        <input 
-                                            type="number"
-                                            className="w-full px-3 py-2 border rounded-lg"
-                                            value={methodParams.index || 0}
-                                            onChange={e => setMethodParams({...methodParams, index: parseInt(e.target.value)})}
-                                        />
-                                    </div>
-                                )}
-                                {selectedMethod === 'array_join' && (
-                                    <div>
-                                        <label className="block text-xs font-medium text-gray-500 mb-1">Delimiter</label>
-                                        <input 
-                                            type="text"
-                                            className="w-full px-3 py-2 border rounded-lg"
-                                            value={methodParams.delimiter || ', '}
-                                            placeholder=", "
-                                            onChange={e => setMethodParams({...methodParams, delimiter: e.target.value})}
-                                        />
-                                        <p className="text-[10px] text-orange-500 mt-1">
-                                            * Value Mapping will apply to individual items before joining.
-                                        </p>
-                                    </div>
-                                )}
-                                {selectedMethod === 'array_includes' && (
-                                    <div>
-                                            <label className="block text-xs font-medium text-gray-500 mb-1">Keyword to Check</label>
-                                            <div className="relative">
-                                                <select 
-                                                    className="w-full px-3 py-2 border rounded-lg mb-2"
-                                                    onChange={e => setMethodParams({...methodParams, keyword: e.target.value})}
-                                                >
-                                                    <option value="">Select Detected Tag...</option>
-                                                    {sourceAnalysis?.uniqueTags.map(t => (
-                                                        <option key={t} value={t}>{t}</option>
-                                                    ))}
-                                                </select>
-                                                <input 
-                                                    type="text"
-                                                    placeholder="Or type custom keyword..."
-                                                    className="w-full px-3 py-2 border rounded-lg"
-                                                    value={methodParams.keyword || ''}
-                                                    onChange={e => setMethodParams({...methodParams, keyword: e.target.value})}
-                                                />
-                                            </div>
-                                    </div>
-                                )}
-                                {selectedMethod === 'date_extract' && (
-                                    <div>
-                                        <label className="block text-xs font-medium text-gray-500 mb-1">Part to Extract</label>
-                                        <select 
-                                            className="w-full px-3 py-2 border rounded-lg"
-                                            value={methodParams.datePart || 'date_only'}
-                                            onChange={e => setMethodParams({...methodParams, datePart: e.target.value})}
-                                        >
-                                            <option value="date_only">Date Only (YYYY-MM-DD)</option>
-                                            <option value="time_only">Time Only (HH:MM)</option>
-                                            <option value="year">Year</option>
-                                            <option value="month">Month</option>
-                                            <option value="day">Day</option>
-                                        </select>
-                                    </div>
-                                )}
-                            </div>
-                          </div>
-
-                          {/* Right Side: Preview & Mapping */}
-                          <div className="w-1/2 flex flex-col bg-gray-50">
-                                <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-                                    <h3 className="font-bold text-lg text-gray-800">Value Mapping</h3>
-                                    <button onClick={() => setIsRuleModalOpen(false)} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
-                                </div>
-
-                                <div className="flex-1 overflow-y-auto p-6">
-                                    {/* Live Preview Block */}
-                                    <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm mb-6">
-                                        <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center">
-                                            <Zap className="w-3 h-3 mr-1" /> Live Preview
-                                        </h4>
-                                        <div className="space-y-2 max-h-40 overflow-y-auto custom-scrollbar">
-                                            {sourceAnalysis?.sampleValues.slice(0, 5).map((val, i) => {
-                                                // Mock Transformation for Preview
-                                                const tempRule: TransformationRule = {
-                                                    id: 'temp', targetName: 'Preview', sourceKey: 'temp', method: selectedMethod, params: methodParams, valueMap
-                                                };
-                                                const mockRow = { temp: val };
-                                                const result = applyTransformation([mockRow], [{ ...tempRule, sourceKey: 'temp' }])[0].Preview;
-
-                                                return (
-                                                    <div key={i} className="text-sm grid grid-cols-2 gap-2 border-b border-gray-100 pb-2 last:border-0">
-                                                        <div className="text-gray-400 truncate" title={String(val)}>{String(val)}</div>
-                                                        <div className="font-medium text-gray-900 truncate flex items-center">
-                                                            <ArrowRight className="w-3 h-3 mr-2 text-blue-400" />
-                                                            {safeRender(result)}
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-
-                                    {/* Mapping Table Block */}
-                                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                                        <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
-                                            <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Map Values</h4>
-                                            <span className="text-[10px] text-gray-400">
-                                                Found {uniqueValuesForMapping.length} values (Scanning top 5000)
-                                            </span>
-                                        </div>
-                                        
-                                        {/* Generated Map List */}
-                                        <div className="max-h-40 overflow-y-auto">
-                                            <table className="w-full text-sm">
-                                                <thead className="bg-gray-50 text-gray-500 text-xs sticky top-0">
-                                                    <tr>
-                                                        <th className="px-4 py-2 text-left font-medium">Original Found</th>
-                                                        <th className="px-4 py-2 text-left font-medium">Map To</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody className="divide-y divide-gray-100">
-                                                    {/* Use the comprehensive unique values list */}
-                                                    {uniqueValuesForMapping.map((val) => (
-                                                        <tr key={val}>
-                                                            <td className="px-4 py-2 text-gray-600 font-mono text-xs truncate max-w-[100px]" title={val}>{val}</td>
-                                                            <td className="px-4 py-2">
-                                                                <input 
-                                                                    className="w-full px-2 py-1 border border-gray-200 rounded text-xs focus:border-blue-500 outline-none"
-                                                                    placeholder={val}
-                                                                    value={valueMap[val] || ''}
-                                                                    onChange={e => setValueMap({...valueMap, [val]: e.target.value})}
-                                                                />
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                    
-                                                    {/* Manually Added Mappings that might not be in the scan */}
-                                                    {Object.keys(valueMap).filter(k => !uniqueValuesForMapping.includes(k)).map(k => (
-                                                        <tr key={k}>
-                                                            <td className="px-4 py-2 text-gray-600 font-mono text-xs truncate max-w-[100px]" title={k}>{k} (Custom)</td>
-                                                            <td className="px-4 py-2">
-                                                                <div className="flex items-center">
-                                                                    <input 
-                                                                        className="w-full px-2 py-1 border border-gray-200 rounded text-xs focus:border-blue-500 outline-none"
-                                                                        value={valueMap[k]}
-                                                                        onChange={e => setValueMap({...valueMap, [k]: e.target.value})}
-                                                                    />
-                                                                    <button 
-                                                                        onClick={() => {
-                                                                            const newMap = {...valueMap};
-                                                                            delete newMap[k];
-                                                                            setValueMap(newMap);
-                                                                        }}
-                                                                        className="ml-2 text-gray-400 hover:text-red-500"
-                                                                    >
-                                                                        <X className="w-3 h-3" />
-                                                                    </button>
-                                                                </div>
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        </div>
-
-                                        {/* Add Manual Map Row */}
-                                        <div className="p-3 bg-gray-50 border-t border-gray-200">
-                                            <div className="text-[10px] text-gray-500 mb-2 font-medium">Add Custom Map (if value not found)</div>
-                                            <div className="flex space-x-2">
-                                                <input 
-                                                    className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-xs outline-none"
-                                                    placeholder="Original Value"
-                                                    value={manualMapKey}
-                                                    onChange={e => setManualMapKey(e.target.value)}
-                                                />
-                                                <ArrowRight className="w-4 h-4 text-gray-400 self-center" />
-                                                <input 
-                                                    className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-xs outline-none"
-                                                    placeholder="New Value"
-                                                    value={manualMapValue}
-                                                    onChange={e => setManualMapValue(e.target.value)}
-                                                />
-                                                <button 
-                                                    onClick={handleAddManualMap}
-                                                    disabled={!manualMapKey || !manualMapValue}
-                                                    className="px-3 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-xs font-medium disabled:opacity-50"
-                                                >
-                                                    <Plus className="w-3 h-3" />
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="px-6 py-4 bg-white border-t border-gray-200 flex justify-end space-x-3">
-                                    <button onClick={() => setIsRuleModalOpen(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium transition-colors">Cancel</button>
-                                    <button 
-                                        onClick={saveRule}
-                                        disabled={!newRuleName || !selectedSourceCol}
-                                        className="px-6 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed shadow-sm"
-                                    >
-                                        {editingRuleId ? 'Update Column' : 'Add Column'}
-                                    </button>
-                                </div>
-                          </div>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-500">
+                      {config.sourceTableIds.length} table{config.sourceTableIds.length > 1 ? 's' : ''}
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className="text-sm font-medium text-gray-900">
+                        {config.outputData.length.toLocaleString()}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className="text-sm font-medium text-gray-900">
+                        {config.outputColumns.length}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-500">
+                      <div className="flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5" />
+                        {new Date(config.lastModified).toLocaleDateString()}
                       </div>
-                  </div>
-              )}
-
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => handleExportConfig(config)}
+                          className="p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                          title="Export to Excel"
+                        >
+                          <Download className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedConfig(config);
+                            setShowEditModal(true);
+                          }}
+                          className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          title="Edit Configuration"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteConfig(config.id, config.name)}
+                          className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Delete Configuration"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
+        )}
+      </div>
+
+      {/* Create Config Modal */}
+      {showCreateModal && (
+        <CreateConfigModal
+          rawTables={rawTables}
+          loading={loading}
+          onClose={() => setShowCreateModal(false)}
+          onCreate={handleCreateConfig}
+        />
       )}
+
+      {/* Edit Config Modal */}
+      {showEditModal && selectedConfig && (
+        <EditConfigModal
+          config={selectedConfig}
+          rawTables={rawTables}
+          loading={loading}
+          onClose={() => {
+            setShowEditModal(false);
+            setSelectedConfig(null);
+          }}
+          onUpdate={(selectedTableIds) => handleUpdateConfig(selectedConfig.id, selectedTableIds)}
+        />
+      )}
+    </div>
+  );
+};
+
+// ==========================================
+// Create Config Modal Component
+// ==========================================
+
+interface CreateConfigModalProps {
+  rawTables: RawTable[];
+  loading: boolean;
+  onClose: () => void;
+  onCreate: (name: string, description: string, selectedTableIds: string[]) => void;
+}
+
+const CreateConfigModal: React.FC<CreateConfigModalProps> = ({
+  rawTables,
+  loading,
+  onClose,
+  onCreate,
+}) => {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [selectedTableIds, setSelectedTableIds] = useState<string[]>([]);
+
+  const toggleTable = (tableId: string) => {
+    if (selectedTableIds.includes(tableId)) {
+      setSelectedTableIds(selectedTableIds.filter(id => id !== tableId));
+    } else {
+      setSelectedTableIds([...selectedTableIds, tableId]);
+    }
+  };
+
+  const selectAll = () => {
+    setSelectedTableIds(rawTables.map(t => t.id));
+  };
+
+  const deselectAll = () => {
+    setSelectedTableIds([]);
+  };
+
+  const stats = getMergeStatistics(
+    rawTables.filter(t => selectedTableIds.includes(t.id))
+  );
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim() || selectedTableIds.length === 0) {
+      alert('Please provide a name and select at least one table');
+      return;
+    }
+    onCreate(name.trim(), description.trim(), selectedTableIds);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-3xl rounded-xl shadow-xl border border-gray-100 p-6 max-h-[90vh] overflow-y-auto">
+        <h3 className="text-xl font-bold text-gray-900 mb-1">Create New Configuration</h3>
+        <p className="text-sm text-gray-500 mb-6">
+          Select source tables to merge and process
+        </p>
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Basic Info */}
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Configuration Name
+              </label>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                placeholder="e.g. Q1 2024 Combined Data"
+                autoFocus
+                disabled={loading}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Description (Optional)
+              </label>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all resize-none h-20"
+                placeholder="Describe what this configuration does..."
+                disabled={loading}
+              />
+            </div>
+          </div>
+
+          {/* Source Selection */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <label className="block text-sm font-semibold text-gray-700">
+                Select Source Tables
+              </label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={selectAll}
+                  className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                >
+                  Select All
+                </button>
+                <span className="text-gray-300">|</span>
+                <button
+                  type="button"
+                  onClick={deselectAll}
+                  className="text-xs text-gray-600 hover:text-gray-700 font-medium"
+                >
+                  Deselect All
+                </button>
+              </div>
+            </div>
+
+            <div className="border border-gray-200 rounded-lg divide-y divide-gray-200 max-h-64 overflow-y-auto">
+              {rawTables.map((table) => (
+                <label
+                  key={table.id}
+                  className="flex items-center gap-3 p-4 hover:bg-gray-50 cursor-pointer transition-colors"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedTableIds.includes(table.id)}
+                    onChange={() => toggleTable(table.id)}
+                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    disabled={loading}
+                  />
+                  <Database className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-gray-900 text-sm">{table.name}</div>
+                    <div className="text-xs text-gray-500">
+                      {table.rowCount.toLocaleString()} rows · {table.columns.length} columns
+                    </div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Preview Stats */}
+          {selectedTableIds.length > 0 && (
+            <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
+              <div className="flex items-center gap-2 mb-2">
+                <Settings className="w-4 h-4 text-blue-600" />
+                <span className="text-sm font-semibold text-blue-900">
+                  Merge Preview
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-4 text-sm">
+                <div>
+                  <span className="text-blue-700 font-medium">Total Rows:</span>
+                  <div className="text-blue-900 font-bold text-lg">
+                    {stats.totalRows.toLocaleString()}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-blue-700 font-medium">Total Columns:</span>
+                  <div className="text-blue-900 font-bold text-lg">
+                    {stats.totalColumns}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-blue-700 font-medium">Source Tables:</span>
+                  <div className="text-blue-900 font-bold text-lg">
+                    {selectedTableIds.length}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={loading}
+              className="px-4 py-2.5 text-gray-600 hover:bg-gray-100 rounded-lg font-medium transition-colors disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading || !name.trim() || selectedTableIds.length === 0}
+              className="px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? 'Creating...' : 'Create Configuration'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// ==========================================
+// Edit Config Modal Component
+// ==========================================
+
+interface EditConfigModalProps {
+  config: PrepConfig;
+  rawTables: RawTable[];
+  loading: boolean;
+  onClose: () => void;
+  onUpdate: (selectedTableIds: string[]) => void;
+}
+
+const EditConfigModal: React.FC<EditConfigModalProps> = ({
+  config,
+  rawTables,
+  loading,
+  onClose,
+  onUpdate,
+}) => {
+  const [selectedTableIds, setSelectedTableIds] = useState<string[]>(config.sourceTableIds);
+
+  const toggleTable = (tableId: string) => {
+    if (selectedTableIds.includes(tableId)) {
+      setSelectedTableIds(selectedTableIds.filter(id => id !== tableId));
+    } else {
+      setSelectedTableIds([...selectedTableIds, tableId]);
+    }
+  };
+
+  const stats = getMergeStatistics(
+    rawTables.filter(t => selectedTableIds.includes(t.id))
+  );
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (selectedTableIds.length === 0) {
+      alert('Please select at least one table');
+      return;
+    }
+    onUpdate(selectedTableIds);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-3xl rounded-xl shadow-xl border border-gray-100 p-6 max-h-[90vh] overflow-y-auto">
+        <h3 className="text-xl font-bold text-gray-900 mb-1">Edit Configuration</h3>
+        <p className="text-sm text-gray-500 mb-2">
+          {config.name}
+        </p>
+        <div className="text-xs text-gray-400 mb-6">
+          Current: {config.outputData.length.toLocaleString()} rows · {config.outputColumns.length} columns
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Source Selection */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-3">
+              Update Source Tables
+            </label>
+
+            <div className="border border-gray-200 rounded-lg divide-y divide-gray-200 max-h-80 overflow-y-auto">
+              {rawTables.map((table) => (
+                <label
+                  key={table.id}
+                  className="flex items-center gap-3 p-4 hover:bg-gray-50 cursor-pointer transition-colors"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedTableIds.includes(table.id)}
+                    onChange={() => toggleTable(table.id)}
+                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    disabled={loading}
+                  />
+                  <Database className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-gray-900 text-sm">{table.name}</div>
+                    <div className="text-xs text-gray-500">
+                      {table.rowCount.toLocaleString()} rows · {table.columns.length} columns
+                    </div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Preview Stats */}
+          {selectedTableIds.length > 0 && (
+            <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
+              <div className="flex items-center gap-2 mb-2">
+                <Settings className="w-4 h-4 text-blue-600" />
+                <span className="text-sm font-semibold text-blue-900">
+                  New Merge Preview
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-4 text-sm">
+                <div>
+                  <span className="text-blue-700 font-medium">Total Rows:</span>
+                  <div className="text-blue-900 font-bold text-lg">
+                    {stats.totalRows.toLocaleString()}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-blue-700 font-medium">Total Columns:</span>
+                  <div className="text-blue-900 font-bold text-lg">
+                    {stats.totalColumns}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-blue-700 font-medium">Source Tables:</span>
+                  <div className="text-blue-900 font-bold text-lg">
+                    {selectedTableIds.length}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={loading}
+              className="px-4 py-2.5 text-gray-600 hover:bg-gray-100 rounded-lg font-medium transition-colors disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading || selectedTableIds.length === 0}
+              className="px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? 'Updating...' : 'Update Configuration'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 };
