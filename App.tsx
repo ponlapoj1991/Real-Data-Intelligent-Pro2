@@ -11,6 +11,8 @@ import Settings from './views/Settings';
 import { Project, AppView, ProjectTab } from './types';
 import { saveLastState } from './utils/storage';
 import { ToastProvider } from './components/ToastProvider';
+import { DataLibraryProvider } from './components/DataLibraryContext';
+import DataLibraryBar from './components/DataLibraryBar';
 
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<AppView>(AppView.LANDING);
@@ -54,62 +56,57 @@ const App: React.FC = () => {
   if (currentView === AppView.PROJECT && currentProject) {
     return (
       <ToastProvider>
-        <div className="flex h-screen overflow-hidden bg-gray-50 font-sans text-gray-900">
-          <Sidebar 
-              activeTab={activeTab} 
-              onTabChange={handleTabChange} 
-              onBackToLanding={handleBackToLanding}
-              projectName={currentProject.name}
-          />
-          
-          <div className="flex-1 flex flex-col overflow-hidden">
-              {/* Top Bar */}
-              <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-8 shadow-sm flex-shrink-0 z-10">
-                  <span className="text-sm text-gray-500 font-medium">
-                      {activeTab === ProjectTab.UPLOAD && 'Step 1: Ingestion'}
-                      {activeTab === ProjectTab.PREP && 'Step 2: Processing'}
-                      {activeTab === ProjectTab.VISUALIZE && 'Step 3: Analysis'}
-                      {activeTab === ProjectTab.AI_AGENT && 'Step 4: AI Enrichment'}
-                      {activeTab === ProjectTab.REPORT && 'Step 5: Presentation Builder'}
-                      {activeTab === ProjectTab.SETTINGS && 'Configuration'}
-                  </span>
-                  <div className="flex items-center space-x-2">
-                      <span className="w-2 h-2 rounded-full bg-green-500"></span>
-                      <span className="text-xs text-gray-400">Auto-saved (IndexedDB)</span>
-                  </div>
-              </header>
+        <DataLibraryProvider project={currentProject} onUpdateProject={updateProject}>
+          <div className="flex h-screen overflow-hidden bg-gray-50 font-sans text-gray-900">
+            <Sidebar
+                activeTab={activeTab}
+                onTabChange={handleTabChange}
+                onBackToLanding={handleBackToLanding}
+                projectName={currentProject.name}
+            />
 
-              <main className="flex-1 overflow-hidden relative">
-                  {activeTab === ProjectTab.UPLOAD && (
-                      <div className="h-full overflow-y-auto">
-                          <DataIngest 
-                              project={currentProject} 
-                              onUpdateProject={updateProject} 
-                              onNext={() => handleTabChange(ProjectTab.PREP)}
-                          />
-                      </div>
-                  )}
-                  {activeTab === ProjectTab.PREP && (
-                      <DataPrep 
-                          project={currentProject}
-                          onUpdateProject={updateProject}
-                      />
-                  )}
-                  {activeTab === ProjectTab.VISUALIZE && (
-                      <Analytics project={currentProject} onUpdateProject={updateProject} />
-                  )}
-                  {activeTab === ProjectTab.AI_AGENT && (
-                      <AiAgent project={currentProject} onUpdateProject={updateProject} />
-                  )}
-                  {activeTab === ProjectTab.REPORT && (
-                      <ReportBuilder project={currentProject} onUpdateProject={updateProject} />
-                  )}
-                  {activeTab === ProjectTab.SETTINGS && (
-                      <Settings project={currentProject} onUpdateProject={updateProject} />
-                  )}
-              </main>
+            <div className="flex-1 flex flex-col overflow-hidden">
+                {/* Top Bar */}
+                <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-8 shadow-sm flex-shrink-0 z-10">
+                    <DataLibraryBar onNavigate={handleTabChange} />
+                    <div className="flex items-center space-x-2">
+                        <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                        <span className="text-xs text-gray-400">Auto-saved (IndexedDB)</span>
+                    </div>
+                </header>
+
+                <main className="flex-1 overflow-hidden relative">
+                    {activeTab === ProjectTab.UPLOAD && (
+                        <div className="h-full overflow-y-auto">
+                            <DataIngest
+                                project={currentProject}
+                                onUpdateProject={updateProject}
+                                onNavigate={handleTabChange}
+                            />
+                        </div>
+                    )}
+                    {activeTab === ProjectTab.PREP && (
+                        <DataPrep
+                            project={currentProject}
+                            onUpdateProject={updateProject}
+                        />
+                    )}
+                    {activeTab === ProjectTab.VISUALIZE && (
+                        <Analytics project={currentProject} onUpdateProject={updateProject} />
+                    )}
+                    {activeTab === ProjectTab.AI_AGENT && (
+                        <AiAgent project={currentProject} onUpdateProject={updateProject} />
+                    )}
+                    {activeTab === ProjectTab.REPORT && (
+                        <ReportBuilder project={currentProject} onUpdateProject={updateProject} />
+                    )}
+                    {activeTab === ProjectTab.SETTINGS && (
+                        <Settings project={currentProject} onUpdateProject={updateProject} />
+                    )}
+                </main>
+            </div>
           </div>
-        </div>
+        </DataLibraryProvider>
       </ToastProvider>
     );
   }

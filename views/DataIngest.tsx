@@ -2,20 +2,22 @@
 import React, { useCallback, useState } from 'react';
 import { UploadCloud, FileSpreadsheet, CheckCircle2, Link as LinkIcon, DownloadCloud } from 'lucide-react';
 import { parseExcelFile, parseCsvUrl, inferColumns } from '../utils/excel';
-import { Project, RawRow } from '../types';
+import { Project, ProjectTab, RawRow } from '../types';
 import { saveProject } from '../utils/storage';
 import { useToast } from '../components/ToastProvider';
+import { useDataLibrary } from '../components/DataLibraryContext';
 
 interface DataIngestProps {
   project: Project;
   onUpdateProject: (p: Project) => void;
-  onNext: () => void;
+  onNavigate: (tab: ProjectTab) => void;
 }
 
-const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, onNext }) => {
+const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, onNavigate }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const { showToast } = useToast();
+  const { registerAsset } = useDataLibrary();
   
   // New state for URL import
   const [importMode, setImportMode] = useState<'file' | 'url'>('file');
@@ -51,7 +53,18 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, onNex
 
       await saveProject(updatedProject);
       onUpdateProject(updatedProject);
-      showToast('Import Successful', `Added ${newData.length} rows to the project.`, 'success');
+
+      await registerAsset({
+        id: `raw-${project.id}`,
+        name: 'Raw Dataset',
+        description: 'ข้อมูลดิบล่าสุดพร้อมให้ทุกฟีเจอร์เรียกใช้',
+        source: ProjectTab.UPLOAD,
+        rowCount: updatedData.length,
+        schema: updatedColumns.map((col) => col.key),
+        tags: ['raw', 'ingest'],
+      });
+
+      showToast('Import Successful', `Added ${newData.length} rows to the project and Library.`, 'success');
   };
 
   const handleFileUpload = async (files: FileList | null) => {
@@ -207,13 +220,27 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, onNex
       {/* Success Banner / Stats */}
       {project.data.length > 0 && !isLoading && (
         <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg flex items-center justify-between text-green-800 animate-fade-in-up">
-          <div className="flex items-center">
-            <CheckCircle2 className="w-5 h-5 mr-3" />
-            <span>Dataset ready with <strong>{project.data.length}</strong> rows.</span>
+          <div>
+            <div className="flex items-center">
+              <CheckCircle2 className="w-5 h-5 mr-3" />
+              <span>Dataset ready with <strong>{project.data.length}</strong> rows.</span>
+            </div>
+            <p className="text-xs text-green-700 mt-1">เผยแพร่ลง Data Library แล้ว สามารถเปิดใช้งานในทุกแท็บได้ทันที</p>
           </div>
-          <button onClick={onNext} className="text-sm font-semibold underline hover:text-green-900">
-            Go to Preparation &rarr;
-          </button>
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={() => onNavigate(ProjectTab.PREP)}
+              className="text-sm font-semibold underline hover:text-green-900"
+            >
+              เปิด Clean & Prep
+            </button>
+            <button
+              onClick={() => onNavigate(ProjectTab.VISUALIZE)}
+              className="text-sm font-semibold underline hover:text-green-900"
+            >
+              วิเคราะห์ทันที
+            </button>
+          </div>
         </div>
       )}
 

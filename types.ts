@@ -14,6 +14,17 @@ export enum ProjectTab {
   SETTINGS = 'SETTINGS', // New Tab
 }
 
+export interface DataAsset {
+  id: string;
+  name: string;
+  description?: string;
+  source: ProjectTab | 'external';
+  schema: string[];
+  rowCount: number;
+  tags?: string[];
+  lastUpdated: number;
+}
+
 export enum AIProvider {
   GEMINI = 'GEMINI',
   OPENAI = 'OPENAI',
@@ -204,10 +215,11 @@ export interface Project {
   lastModified: number;
   data: RawRow[];          // Original Raw Data
   columns: ColumnConfig[]; // Config for Raw Data
-  
+  dataAssets?: DataAsset[]; // Shared datasets/assets for cross-feature use
+
   transformRules?: TransformationRule[];
   dashboard?: DashboardWidget[]; // Saved Dashboard Config
-  
+
   reportConfig?: ReportSlide[]; // Saved Report Builder Config
   
   aiSettings?: AISettings; // New: Per-project AI Settings

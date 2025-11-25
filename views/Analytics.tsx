@@ -1,10 +1,10 @@
 
 import React, { useMemo, useState, useEffect, useRef } from 'react';
-import { Project, DashboardWidget, DashboardFilter, DrillDownState, RawRow } from '../types';
-import { 
+import { Project, DashboardWidget, DashboardFilter, DrillDownState, RawRow, ProjectTab } from '../types';
+import {
     PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, AreaChart, Area, LabelList
 } from 'recharts';
-import { Sparkles, Bot, Loader2, Plus, LayoutGrid, Trash2, Pencil, Filter, X, Presentation, FileOutput, Eye, EyeOff, Table, Download, ChevronRight, MousePointer2, MousePointerClick, MessageSquarePlus, Command } from 'lucide-react';
+import { Sparkles, Bot, Loader2, Plus, LayoutGrid, Trash2, Pencil, Filter, X, Presentation, FileOutput, Eye, EyeOff, Table, Download, ChevronRight, MousePointer2, MousePointerClick, MessageSquarePlus, Command, Share2 } from 'lucide-react';
 import { analyzeProjectData, generateWidgetFromPrompt, DataSummary } from '../utils/ai';
 import { applyTransformation } from '../utils/transform';
 import { saveProject } from '../utils/storage';
@@ -13,6 +13,8 @@ import { exportToExcel } from '../utils/excel';
 import ChartBuilder from '../components/ChartBuilder';
 import EmptyState from '../components/EmptyState';
 import Skeleton from '../components/Skeleton';
+import { useDataLibrary } from '../components/DataLibraryContext';
+import { useToast } from '../components/ToastProvider';
 
 interface AnalyticsProps {
   project: Project;
@@ -52,6 +54,8 @@ const formatWidgetValue = (widget: DashboardWidget, val: number) => {
 const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
+  const { registerAsset } = useDataLibrary();
+  const { showToast } = useToast();
   
   // Generative Chart State
   const [prompt, setPrompt] = useState('');
@@ -106,6 +110,26 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
           });
       });
   }, [baseData, filters]);
+
+  const publishDashboardSnapshot = async () => {
+      if (filteredData.length === 0) {
+          showToast('ยังไม่มีข้อมูล', 'เพิ่มข้อมูลหรือปรับตัวกรองก่อนส่งไป Library', 'warning');
+          return;
+      }
+
+      const schema = Object.keys(filteredData[0] || {});
+      await registerAsset({
+          id: `analytics-${project.id}`,
+          name: 'Analytics Snapshot',
+          description: 'ข้อมูลที่พร้อมใช้สำหรับ AI / Report / Dashboard',
+          source: ProjectTab.VISUALIZE,
+          rowCount: filteredData.length,
+          schema,
+          tags: ['analytics', 'ready'],
+      });
+
+      showToast('บันทึก Snapshot แล้ว', 'Asset พร้อมใช้ในทุกแท็บโดยไม่ต้องรอ pipeline', 'success');
+  };
 
   const applyWidgetFilters = (rows: RawRow[], widgetFilters?: DashboardFilter[]) => {
       if (!widgetFilters || widgetFilters.length === 0) return rows;
@@ -707,6 +731,13 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                     <button onClick={handleAddWidget} className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors shadow-sm">
                         <Plus className="w-4 h-4" />
                         <span className="hidden md:inline">Add Chart</span>
+                    </button>
+                    <button
+                        onClick={publishDashboardSnapshot}
+                        className="flex items-center space-x-2 px-4 py-2 bg-white border border-blue-200 text-blue-700 text-sm font-medium rounded-lg hover:bg-blue-50 transition-colors shadow-sm"
+                    >
+                        <Share2 className="w-4 h-4" />
+                        <span className="hidden md:inline">ส่งเข้า Library</span>
                     </button>
                 </>
             )}

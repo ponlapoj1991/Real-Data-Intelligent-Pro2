@@ -1,10 +1,12 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Settings, Download, Save, Search, X, Eraser, Trash2, Replace, ArrowRight, Zap, Calendar, Split, Table2, Database, Plus, GripVertical, Check, ListFilter, ChevronUp, ChevronDown, Pencil } from 'lucide-react';
-import { Project, RawRow, ColumnConfig, TransformationRule, TransformMethod } from '../types';
+import { Settings, Download, Save, Search, X, Eraser, Trash2, Replace, ArrowRight, Zap, Calendar, Split, Table2, Database, Plus, GripVertical, Check, ListFilter, ChevronUp, ChevronDown, Pencil, Share2 } from 'lucide-react';
+import { Project, RawRow, ColumnConfig, TransformationRule, TransformMethod, ProjectTab } from '../types';
 import { saveProject } from '../utils/storage';
 import { exportToExcel, smartParseDate } from '../utils/excel';
 import { analyzeSourceColumn, applyTransformation, getAllUniqueValues } from '../utils/transform';
 import EmptyState from '../components/EmptyState';
+import { useDataLibrary } from '../components/DataLibraryContext';
+import { useToast } from '../components/ToastProvider';
 
 interface DataPrepProps {
   project: Project;
@@ -16,6 +18,8 @@ type Mode = 'clean' | 'build';
 const DataPrep: React.FC<DataPrepProps> = ({ project, onUpdateProject }) => {
   const [mode, setMode] = useState<Mode>('clean');
   const [isSaving, setIsSaving] = useState(false);
+  const { registerAsset } = useDataLibrary();
+  const { showToast } = useToast();
 
   // --- CLEAN MODE STATES ---
   const [editingCol, setEditingCol] = useState<string | null>(null);
@@ -82,6 +86,29 @@ const DataPrep: React.FC<DataPrepProps> = ({ project, onUpdateProject }) => {
       } else {
         exportToExcel(structuredData, `${project.name}_Structured`);
       }
+  };
+
+  const publishToLibrary = async () => {
+      const dataset = mode === 'build' && structuredData.length > 0 ? structuredData : project.data;
+      if (dataset.length === 0) {
+          showToast('ยังไม่มีข้อมูล', 'เพิ่มข้อมูลก่อนเผยแพร่ไป Library', 'warning');
+          return;
+      }
+
+      const schema = Object.keys(dataset[0] || {});
+      const isStructured = mode === 'build' && structuredData.length > 0;
+
+      await registerAsset({
+          id: isStructured ? `structured-${project.id}` : `clean-${project.id}`,
+          name: isStructured ? 'Structured Dataset' : 'Clean Dataset',
+          description: isStructured ? 'ข้อมูลที่ผ่านการสร้างคอลัมน์จาก Data Prep' : 'ข้อมูลดิบหลังทำความสะอาด',
+          source: ProjectTab.PREP,
+          rowCount: dataset.length,
+          schema,
+          tags: isStructured ? ['structured', 'prep'] : ['clean', 'prep'],
+      });
+
+      showToast('บันทึกแล้ว', 'พร้อมให้ Analytics / AI / Report เรียกใช้', 'success');
   };
 
   // --- CLEAN MODE FUNCTIONS ---
@@ -295,13 +322,20 @@ const DataPrep: React.FC<DataPrepProps> = ({ project, onUpdateProject }) => {
                 </button>
             </div>
         </div>
-        
+
         <div className="flex space-x-3">
+             <button
+                onClick={publishToLibrary}
+                className="flex items-center space-x-2 px-4 py-2 bg-white border border-blue-200 text-blue-700 rounded-lg hover:bg-blue-50 transition-colors shadow-sm"
+             >
+                <Share2 className="w-4 h-4" />
+                <span>ส่งเข้า Library</span>
+             </button>
              <button onClick={handleExport} className="flex items-center space-x-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors shadow-sm">
                 <Download className="w-4 h-4" />
                 <span>Export {mode === 'build' ? 'Structure' : 'Raw'}</span>
             </button>
-             <button 
+             <button
                 onClick={handleManualSave}
                 disabled={isSaving}
                 className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors shadow-sm disabled:opacity-50">
