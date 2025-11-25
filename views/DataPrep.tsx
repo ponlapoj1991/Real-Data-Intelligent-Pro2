@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { FileSpreadsheet, Plus, Edit2, Trash2, Clock, Database, Settings, Layers, Download } from 'lucide-react';
-import { Project, PrepConfig, MergingStrategy, RawTable } from '../types';
+import { FileSpreadsheet, Plus, Edit2, Trash2, Clock, Database, Settings, Layers, Download, Sliders, X } from 'lucide-react';
+import { Project, PrepConfig, MergingStrategy, RawTable, TransformationRule, TransformMethod } from '../types';
 import { saveProject } from '../utils/storage';
 import { unionTables, getMergeStatistics } from '../utils/dataMerge';
+import { applyTransformation } from '../utils/transform';
 import EmptyState from '../components/EmptyState';
 import { exportToExcel, inferColumns } from '../utils/excel';
 
@@ -17,6 +18,7 @@ const DataPrep: React.FC<Props> = ({ project, onUpdateProject }) => {
   const [loading, setLoading] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showTransformModal, setShowTransformModal] = useState(false);
   const [selectedConfig, setSelectedConfig] = useState<PrepConfig | null>(null);
 
   // Sync prepConfigs with project
@@ -280,6 +282,16 @@ const DataPrep: React.FC<Props> = ({ project, onUpdateProject }) => {
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <button
+                          onClick={() => {
+                            setSelectedConfig(config);
+                            setShowTransformModal(true);
+                          }}
+                          className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                          title="Configure Transformations"
+                        >
+                          <Sliders className="w-4 h-4" />
+                        </button>
+                        <button
                           onClick={() => handleExportConfig(config)}
                           className="p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors"
                           title="Export to Excel"
@@ -292,7 +304,7 @@ const DataPrep: React.FC<Props> = ({ project, onUpdateProject }) => {
                             setShowEditModal(true);
                           }}
                           className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                          title="Edit Configuration"
+                          title="Edit Source Tables"
                         >
                           <Edit2 className="w-4 h-4" />
                         </button>
@@ -334,6 +346,32 @@ const DataPrep: React.FC<Props> = ({ project, onUpdateProject }) => {
             setSelectedConfig(null);
           }}
           onUpdate={(selectedTableIds) => handleUpdateConfig(selectedConfig.id, selectedTableIds)}
+        />
+      )}
+
+      {/* Transformation Builder Modal */}
+      {showTransformModal && selectedConfig && (
+        <TransformationBuilderModal
+          config={selectedConfig}
+          project={project}
+          onClose={() => {
+            setShowTransformModal(false);
+            setSelectedConfig(null);
+          }}
+          onSave={(updatedConfig) => {
+            const updatedConfigs = prepConfigs.map(c =>
+              c.id === updatedConfig.id ? updatedConfig : c
+            );
+            const updatedProject = {
+              ...project,
+              prepConfigs: updatedConfigs,
+            };
+            saveProject(updatedProject);
+            onUpdateProject(updatedProject);
+            setPrepConfigs(updatedConfigs);
+            setShowTransformModal(false);
+            setSelectedConfig(null);
+          }}
         />
       )}
     </div>
@@ -672,6 +710,346 @@ const EditConfigModal: React.FC<EditConfigModalProps> = ({
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+};
+
+// ==========================================
+// Transformation Builder Modal Component
+// ==========================================
+
+interface TransformationBuilderModalProps {
+  config: PrepConfig;
+  project: Project;
+  onClose: () => void;
+  onSave: (updatedConfig: PrepConfig) => void;
+}
+
+const TransformationBuilderModal: React.FC<TransformationBuilderModalProps> = ({
+  config,
+  project,
+  onClose,
+  onSave,
+}) => {
+  const [transformRules, setTransformRules] = useState<TransformationRule[]>(config.transformRules || []);
+  const [previewMode, setPreviewMode] = useState<'source' | 'output'>('source');
+  const [showAddRule, setShowAddRule] = useState(false);
+  const [newRuleName, setNewRuleName] = useState('');
+  const [newRuleSource, setNewRuleSource] = useState('');
+  const [newRuleMethod, setNewRuleMethod] = useState<TransformMethod>('copy');
+
+  // Get merged source data
+  const sourceData = config.outputData;
+  const sourceColumns = config.outputColumns;
+
+  // Apply transformations to preview output
+  const getTransformedData = () => {
+    if (transformRules.length === 0) return sourceData;
+    return applyTransformation(sourceData, transformRules);
+  };
+
+  const transformedData = getTransformedData();
+
+  const handleAddRule = () => {
+    if (!newRuleName.trim() || !newRuleSource) {
+      alert('Please provide a column name and select a source');
+      return;
+    }
+
+    const newRule: TransformationRule = {
+      id: crypto.randomUUID(),
+      targetName: newRuleName.trim(),
+      sourceKey: newRuleSource,
+      method: newRuleMethod,
+    };
+
+    setTransformRules([...transformRules, newRule]);
+    setNewRuleName('');
+    setNewRuleSource('');
+    setNewRuleMethod('copy');
+    setShowAddRule(false);
+  };
+
+  const handleDeleteRule = (ruleId: string) => {
+    setTransformRules(transformRules.filter(r => r.id !== ruleId));
+  };
+
+  const handleSave = () => {
+    const finalData = getTransformedData();
+
+    // Update column configs with new derived columns
+    const derivedColumns = transformRules.map(rule => ({
+      key: rule.targetName,
+      type: 'string' as const,
+      visible: true,
+      label: rule.targetName,
+    }));
+
+    const updatedConfig: PrepConfig = {
+      ...config,
+      transformRules,
+      outputData: finalData,
+      outputColumns: [...sourceColumns, ...derivedColumns],
+      lastModified: Date.now(),
+    };
+
+    onSave(updatedConfig);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-white z-50 flex flex-col">
+      {/* Header */}
+      <div className="bg-white border-b border-gray-200 px-8 py-4 flex-shrink-0">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+              <Sliders className="w-5 h-5 text-indigo-600" />
+              Configure Transformations: {config.name}
+            </h2>
+            <p className="text-sm text-gray-500 mt-1">
+              Apply filters, rename columns, and derive new fields
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium shadow-sm transition-colors"
+            >
+              Save Transformations
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Left Panel - Transformation Rules */}
+        <div className="w-80 bg-gray-50 border-r border-gray-200 p-6 overflow-y-auto">
+          <div className="mb-6">
+            <h3 className="text-sm font-bold text-gray-700 uppercase mb-3">
+              Transformation Rules
+            </h3>
+
+            {transformRules.length === 0 ? (
+              <div className="text-center py-8 text-gray-400 text-sm">
+                No rules yet<br />
+                Add transformations below
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {transformRules.map((rule) => (
+                  <div key={rule.id} className="bg-white p-3 rounded-lg border border-gray-200 group">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="text-xs font-medium text-indigo-600 uppercase">
+                          {rule.method}
+                        </div>
+                        <div className="text-sm text-gray-900 mt-1 font-medium">
+                          {rule.targetName}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-0.5">
+                          from: {rule.sourceKey}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteRule(rule.id)}
+                        className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 rounded transition-all"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {!showAddRule ? (
+            <button
+              onClick={() => setShowAddRule(true)}
+              className="w-full px-4 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium transition-colors"
+            >
+              + Add Derived Column
+            </button>
+          ) : (
+            <div className="bg-white p-4 rounded-lg border border-indigo-200 space-y-3">
+              <h4 className="text-sm font-bold text-gray-700">New Derived Column</h4>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  Column Name
+                </label>
+                <input
+                  type="text"
+                  value={newRuleName}
+                  onChange={(e) => setNewRuleName(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                  placeholder="e.g. Tag_Count"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  Source Column
+                </label>
+                <select
+                  value={newRuleSource}
+                  onChange={(e) => setNewRuleSource(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                >
+                  <option value="">Select...</option>
+                  {sourceColumns.map((col) => (
+                    <option key={col.key} value={col.key}>
+                      {col.label || col.key}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  Transform Method
+                </label>
+                <select
+                  value={newRuleMethod}
+                  onChange={(e) => setNewRuleMethod(e.target.value as TransformMethod)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                >
+                  <option value="copy">Copy (Direct)</option>
+                  <option value="array_count">Array Count</option>
+                  <option value="array_join">Array Join</option>
+                  <option value="date_extract">Date Extract</option>
+                </select>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  onClick={() => setShowAddRule(false)}
+                  className="flex-1 px-3 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm font-medium transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAddRule}
+                  className="flex-1 px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium transition-colors"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Right Panel - Data Preview */}
+        <div className="flex-1 flex flex-col bg-white">
+          {/* Preview Toggle */}
+          <div className="px-6 py-3 border-b border-gray-200 flex items-center justify-between bg-gray-50">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPreviewMode('source')}
+                className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                  previewMode === 'source'
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Source Data
+              </button>
+              <button
+                onClick={() => setPreviewMode('output')}
+                className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                  previewMode === 'output'
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Output Preview
+              </button>
+            </div>
+            <div className="text-sm text-gray-500">
+              {previewMode === 'source'
+                ? `${sourceData.length.toLocaleString()} rows · ${sourceColumns.length} columns`
+                : `${transformedData.length.toLocaleString()} rows · ${sourceColumns.length + transformRules.length} columns`}
+            </div>
+          </div>
+
+          {/* Data Table */}
+          <div className="flex-1 overflow-auto">
+            {previewMode === 'source' ? (
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 sticky top-0 z-10">
+                  <tr>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">#</th>
+                    {sourceColumns.map((col) => (
+                      <th key={col.key} className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                        {col.label || col.key}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {sourceData.slice(0, 100).map((row, rowIndex) => (
+                    <tr key={rowIndex} className="hover:bg-gray-50">
+                      <td className="px-4 py-2 text-gray-400 font-mono text-xs">{rowIndex + 1}</td>
+                      {sourceColumns.map((col) => (
+                        <td key={col.key} className="px-4 py-2 text-gray-700 truncate max-w-xs">
+                          {String(row[col.key] ?? '')}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 sticky top-0 z-10">
+                  <tr>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">#</th>
+                    {sourceColumns.map((col) => (
+                      <th key={col.key} className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                        {col.label || col.key}
+                      </th>
+                    ))}
+                    {transformRules.map((rule) => (
+                      <th key={rule.id} className="px-4 py-2 text-left text-xs font-medium text-indigo-600 uppercase bg-indigo-50">
+                        {rule.targetName}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {transformedData.slice(0, 100).map((row, rowIndex) => (
+                    <tr key={rowIndex} className="hover:bg-gray-50">
+                      <td className="px-4 py-2 text-gray-400 font-mono text-xs">{rowIndex + 1}</td>
+                      {sourceColumns.map((col) => (
+                        <td key={col.key} className="px-4 py-2 text-gray-700 truncate max-w-xs">
+                          {String(row[col.key] ?? '')}
+                        </td>
+                      ))}
+                      {transformRules.map((rule) => (
+                        <td key={rule.id} className="px-4 py-2 text-indigo-900 truncate max-w-xs bg-indigo-50/50 font-medium">
+                          {String(row[rule.targetName] ?? '')}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {sourceData.length > 100 && (
+              <div className="p-4 text-center text-sm text-gray-500 bg-gray-50 border-t">
+                Showing first 100 rows of {sourceData.length.toLocaleString()}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
