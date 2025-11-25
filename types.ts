@@ -8,6 +8,7 @@ export enum AppView {
 export enum ProjectTab {
   DATABASE = 'DATABASE', // New: Raw Material Library
   PREP = 'PREP',
+  OWN_DATA = 'OWN_DATA', // New: Processed/Extracted Data
   VISUALIZE = 'VISUALIZE',
   REPORT = 'REPORT',
   AI_AGENT = 'AI_AGENT',
@@ -112,6 +113,15 @@ export interface ColumnMapping {
   sourceColumns: string[];  // Source columns to map from
 }
 
+// Per-Table Transformation Mapping (for multi-source configs)
+export interface PerTableMapping {
+  tableId: string;              // Source RawTable ID
+  sourceColumn: string;         // Column from this table
+  method: TransformMethod;      // Transform method for this table
+  params?: any;                 // Method-specific parameters
+  valueMap?: Record<string, string>; // Value mapping for this table
+}
+
 export interface PrepConfig {
   id: string;
   name: string;
@@ -125,11 +135,38 @@ export interface PrepConfig {
   // Transformation Rules (existing)
   transformRules: TransformationRule[];
 
+  // NEW: Per-table mapping rules (for multi-source transformation)
+  perTableMappings?: {
+    [targetColumn: string]: PerTableMapping[]; // Target column → array of per-table configs
+  };
+
   // Output (Cached Result)
   outputData: RawRow[];
   outputColumns: ColumnConfig[];
 
   // Metadata
+  createdAt: number;
+  lastModified: number;
+}
+
+// --- Own Data (Processed/Extracted Tables) ---
+
+export interface OwnDataTable {
+  id: string;
+  name: string;
+  description?: string;
+
+  // Source Reference
+  sourceType: 'prepConfig' | 'manual';  // Created from PrepConfig or manual upload
+  sourcePrepConfigId?: string;          // If created from PrepConfig
+
+  // Data
+  data: RawRow[];
+  columns: ColumnConfig[];
+  rowCount: number;
+
+  // Metadata
+  createdBy: string;
   createdAt: number;
   lastModified: number;
 }
@@ -274,6 +311,7 @@ export interface Project {
   // NEW: Asset-Based Architecture
   rawTables?: RawTable[];        // Drawer 1: Raw Material Library
   prepConfigs?: PrepConfig[];    // Drawer 2: Processing Factory
+  ownDataTables?: OwnDataTable[]; // Drawer 3: Processed/Extracted Data
   dashboards?: Dashboard[];      // Multiple Dashboards
 
   // Legacy fields (for backward compatibility & migration)

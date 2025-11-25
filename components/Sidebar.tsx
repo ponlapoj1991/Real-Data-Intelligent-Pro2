@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { LayoutDashboard, Database, FileSpreadsheet, ArrowLeft, BarChart3, ChevronRight, FileOutput, Bot, Settings, PanelLeftClose, PanelLeftOpen, FolderOpen } from 'lucide-react';
+import { LayoutDashboard, Database, FileSpreadsheet, ArrowLeft, BarChart3, ChevronRight, FileOutput, Bot, Settings, PanelLeftClose, PanelLeftOpen, FolderOpen, FileCheck } from 'lucide-react';
 import { ProjectTab } from '../types';
 
 interface SidebarProps {
@@ -16,6 +16,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, onBackToLandi
   const menuItems = [
     { id: ProjectTab.DATABASE, label: 'Database', icon: Database },
     { id: ProjectTab.PREP, label: 'Clean & Prep', icon: FileSpreadsheet },
+    { id: ProjectTab.OWN_DATA, label: 'Own Data', icon: FileCheck },
     { id: ProjectTab.VISUALIZE, label: 'Analytics', icon: BarChart3 },
     { id: ProjectTab.AI_AGENT, label: 'AI Agent', icon: Bot },
     { id: ProjectTab.REPORT, label: 'Report Builder', icon: FileOutput },

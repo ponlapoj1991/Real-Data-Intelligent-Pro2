@@ -4,6 +4,7 @@ import Landing from './views/Landing';
 import Sidebar from './components/Sidebar';
 import DatabaseManager from './views/DatabaseManager';
 import DataPrep from './views/DataPrep';
+import OwnData from './views/OwnData';
 import Analytics from './views/Analytics';
 import ReportBuilder from './views/ReportBuilder';
 import AiAgent from './views/AiAgent';
@@ -68,6 +69,7 @@ const App: React.FC = () => {
                   <span className="text-sm text-gray-500 font-medium">
                       {activeTab === ProjectTab.DATABASE && 'Database Management'}
                       {activeTab === ProjectTab.PREP && 'Data Processing'}
+                      {activeTab === ProjectTab.OWN_DATA && 'Own Data'}
                       {activeTab === ProjectTab.VISUALIZE && 'Analytics & Visualization'}
                       {activeTab === ProjectTab.AI_AGENT && 'AI Agent'}
                       {activeTab === ProjectTab.REPORT && 'Report Builder'}
@@ -88,6 +90,12 @@ const App: React.FC = () => {
                   )}
                   {activeTab === ProjectTab.PREP && (
                       <DataPrep
+                          project={currentProject}
+                          onUpdateProject={updateProject}
+                      />
+                  )}
+                  {activeTab === ProjectTab.OWN_DATA && (
+                      <OwnData
                           project={currentProject}
                           onUpdateProject={updateProject}
                       />
