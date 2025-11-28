@@ -82,7 +82,7 @@ export interface TransformationRule {
 
 // --- Dashboard & Widget Types (Phase 2 & 3 & 4) ---
 
-export type ChartType = 'bar' | 'line' | 'pie' | 'area' | 'kpi' | 'wordcloud' | 'table';
+export type ChartType = 'bar' | 'line' | 'pie' | 'area' | 'kpi' | 'wordcloud' | 'table' | 'combo';
 export type AggregateMethod = 'count' | 'sum' | 'avg';
 
 export interface DashboardFilter {
@@ -91,30 +91,102 @@ export interface DashboardFilter {
   value: string;
 }
 
+// Data Labels Configuration
+export interface DataLabelConfig {
+  enabled: boolean;
+  position: 'top' | 'center' | 'bottom' | 'inside' | 'outside' | 'end';
+  fontSize: number;
+  fontWeight: 'normal' | 'bold';
+  color: string;
+}
+
+// Series Configuration (Google Sheets style)
+export interface SeriesConfig {
+  id: string;
+  label: string;
+  type: 'bar' | 'line' | 'area';
+  measure: AggregateMethod;
+  measureCol?: string;
+  filters?: DashboardFilter[];  // Per-series filters for time comparison
+  yAxis: 'left' | 'right';
+  color: string;
+  dataLabels?: DataLabelConfig;
+}
+
+// Axis Configuration
+export interface AxisConfig {
+  title?: string;
+  min?: number | 'auto';
+  max?: number | 'auto';
+  fontSize?: number;
+  fontColor?: string;
+  format?: string;  // '#,##0' | '#,##0.00' | '0%' | '$#,##0'
+  slant?: 0 | 45 | 90;
+  showGridlines?: boolean;
+}
+
+// Gridlines Configuration
+export interface GridlineConfig {
+  majorColor?: string;
+  minorColor?: string;
+  style?: 'solid' | 'dashed' | 'dotted';
+}
+
+// Legend Configuration
+export interface LegendConfig {
+  enabled: boolean;
+  position: 'top' | 'bottom' | 'left' | 'right';
+  fontSize: number;
+  fontColor?: string;
+  alignment?: 'left' | 'center' | 'right';
+}
+
 export interface DashboardWidget {
   id: string;
   title: string;
   type: ChartType;
 
   // Data Configuration
-  dimension: string;      // X-Axis (Group By) or Text Col for Wordcloud/Table
-  stackBy?: string;       // New: For Stacked Bar Charts (e.g. Stack by Sentiment)
-  measure: AggregateMethod; // Method e.g., "Count"
-  measureCol?: string;    // Y-Axis (Value) or Sort By for Table
-  limit?: number;         // Limit rows (Top 10, 20, etc)
-  filters?: DashboardFilter[]; // Per-widget filters (stacked with global filters)
+  dimension: string;      // X-Axis (Group By)
 
-  // Visuals
-  color?: string;
-  palette?: string[]; // Custom palette per widget
-  seriesColors?: Record<string, string>; // Override by series/category name
-  showValues?: boolean; // Show data labels on charts
-  showLegend?: boolean; // Toggle legend visibility
+  // Multiple Series Support (NEW - Google Sheets style)
+  series?: SeriesConfig[];  // Multiple series for comparison
+
+  // Legacy single-series support (for backward compatibility)
+  measure?: AggregateMethod;
+  measureCol?: string;
+  stackBy?: string;
+  filters?: DashboardFilter[];
+
+  limit?: number;         // Limit rows (Top 10, 20, etc)
+
+  // Titles & Subtitles (NEW)
+  chartTitle?: string;
+  subtitle?: string;
+
+  // Axes Configuration (NEW)
+  xAxis?: AxisConfig;
+  leftYAxis?: AxisConfig;
+  rightYAxis?: AxisConfig;
+
+  // Gridlines (NEW)
+  gridlines?: GridlineConfig;
+
+  // Legend (UPDATED)
+  legend?: LegendConfig;
+
+  // Data Labels (NEW)
+  dataLabels?: DataLabelConfig;
+
+  // Legacy Visual Options (for backward compatibility)
+  showValues?: boolean;
+  showLegend?: boolean;
   legendPosition?: 'top' | 'bottom' | 'left' | 'right';
   valueFormat?: 'number' | 'compact' | 'percent' | 'currency';
   barOrientation?: 'horizontal' | 'vertical';
   barMode?: 'grouped' | 'stacked' | 'percent';
   showGrid?: boolean;
+
   width: 'half' | 'full'; // Grid span
 }
 
