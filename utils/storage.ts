@@ -22,12 +22,16 @@ const dbToProject = (row: any): Project => {
 
 // Helper: Convert Project to database row
 const projectToDb = (project: Project) => {
+  // Limit data to prevent timeout on large datasets
+  // Store max 5000 rows for preview/dashboard purposes
+  const limitedData = project.data.slice(0, 5000);
+
   return {
     id: project.id,
     name: project.name,
     description: project.description,
     last_modified: project.lastModified,
-    data: project.data,
+    data: limitedData,  // Limited to 5000 rows
     columns: project.columns,
     transform_rules: project.transformRules,
     dashboard: project.dashboard,
