@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Project, AISettings, AIProvider } from '../types';
-import { saveProject } from '../utils/storage';
+import { saveProject } from '../utils/storage-compat';
 import { Save, CheckCircle2, Key, Cpu, Sliders, AlertTriangle, Eye, EyeOff, Loader2 } from 'lucide-react';
 
 interface SettingsProps {

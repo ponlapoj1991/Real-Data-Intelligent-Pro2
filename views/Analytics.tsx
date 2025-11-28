@@ -7,7 +7,7 @@ import {
 import { Sparkles, Bot, Loader2, Plus, LayoutGrid, Trash2, Pencil, Filter, X, Presentation, FileOutput, Eye, EyeOff, Table, Download, ChevronRight, MousePointer2, MousePointerClick, MessageSquarePlus, Command } from 'lucide-react';
 import { analyzeProjectData, generateWidgetFromPrompt, DataSummary } from '../utils/ai';
 import { applyTransformation } from '../utils/transform';
-import { saveProject } from '../utils/storage';
+import { saveProject } from '../utils/storage-compat';
 import { generatePowerPoint } from '../utils/report';
 import { exportToExcel } from '../utils/excel';
 import ChartBuilder from '../components/ChartBuilder';
