@@ -41,10 +41,7 @@ interface ErrorMessage {
 
 type WorkerResponse = ChunkMessage | CompleteMessage | ErrorMessage;
 
-// Load XLSX library from CDN (already loaded in main thread via index.html)
-// Web Workers can't access window.XLSX, so we need to import it
-importScripts('https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js');
-
+// XLSX will be passed from main thread
 declare const XLSX: any;
 
 /**

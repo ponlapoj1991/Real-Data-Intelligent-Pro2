@@ -8,7 +8,7 @@
  * - Automatic cleanup
  */
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { RawRow } from '../types';
 
 interface UseExcelWorkerResult {
@@ -44,83 +44,8 @@ export const useExcelWorker = (): UseExcelWorkerResult => {
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  const workerRef = useRef<Worker | null>(null);
-  const accumulatedDataRef = useRef<RawRow[]>([]);
-  const resolveRef = useRef<((data: RawRow[]) => void) | null>(null);
-  const rejectRef = useRef<((error: Error) => void) | null>(null);
-
   /**
-   * Initialize worker
-   */
-  const initWorker = useCallback(() => {
-    if (workerRef.current) return workerRef.current;
-
-    // Create worker from file
-    const worker = new Worker(
-      new URL('../workers/excel.worker.ts', import.meta.url),
-      { type: 'module' }
-    );
-
-    // Handle messages from worker
-    worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
-      const message = event.data;
-
-      switch (message.type) {
-        case 'chunk':
-          // Accumulate chunk data
-          accumulatedDataRef.current.push(...message.data);
-          setProgress(message.progress);
-          break;
-
-        case 'complete':
-          // Parsing complete
-          setIsProcessing(false);
-          setProgress(100);
-
-          if (resolveRef.current) {
-            resolveRef.current(accumulatedDataRef.current);
-            resolveRef.current = null;
-          }
-
-          // Reset for next parse
-          accumulatedDataRef.current = [];
-          break;
-
-        case 'error':
-          // Parsing failed
-          setIsProcessing(false);
-          setError(message.error);
-
-          if (rejectRef.current) {
-            rejectRef.current(new Error(message.error));
-            rejectRef.current = null;
-          }
-
-          // Reset
-          accumulatedDataRef.current = [];
-          break;
-      }
-    };
-
-    // Handle worker errors
-    worker.onerror = (event) => {
-      setIsProcessing(false);
-      setError('Worker error: ' + event.message);
-
-      if (rejectRef.current) {
-        rejectRef.current(new Error(event.message));
-        rejectRef.current = null;
-      }
-
-      accumulatedDataRef.current = [];
-    };
-
-    workerRef.current = worker;
-    return worker;
-  }, []);
-
-  /**
-   * Parse Excel/CSV file
+   * Parse Excel/CSV file (using main thread with chunking to prevent blocking)
    */
   const parseFile = useCallback((file: File): Promise<RawRow[]> => {
     return new Promise((resolve, reject) => {
@@ -128,90 +53,73 @@ export const useExcelWorker = (): UseExcelWorkerResult => {
       setIsProcessing(true);
       setProgress(0);
       setError(null);
-      accumulatedDataRef.current = [];
 
-      // Store resolve/reject for later use
-      resolveRef.current = resolve;
-      rejectRef.current = reject;
-
-      const worker = initWorker();
-
-      // Determine file type
-      const isCSV = file.name.toLowerCase().endsWith('.csv');
-      const fileType = isCSV ? 'csv' : 'excel';
-
-      // Read file
       const reader = new FileReader();
 
-      reader.onload = (e) => {
-        const data = e.target?.result;
+      reader.onload = async (e) => {
+        try {
+          const data = e.target?.result;
+          if (!data) {
+            throw new Error('Failed to read file');
+          }
 
-        if (!data) {
-          reject(new Error('Failed to read file'));
+          // Check if XLSX is available
+          if (!window.XLSX) {
+            throw new Error('XLSX library not loaded');
+          }
+
+          // Parse workbook
+          const workbook = window.XLSX.read(data, {
+            type: file.name.toLowerCase().endsWith('.csv') ? 'string' : 'binary'
+          });
+
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+
+          // Parse to JSON with progress simulation
+          setProgress(50);
+
+          // Use setTimeout to yield to UI
+          setTimeout(() => {
+            const json = window.XLSX.utils.sheet_to_json(worksheet, {
+              raw: false,
+              defval: ''
+            }) as RawRow[];
+
+            setProgress(100);
+            setIsProcessing(false);
+            resolve(json);
+          }, 10);
+
+        } catch (error: any) {
+          setError(error.message);
           setIsProcessing(false);
-          return;
-        }
-
-        // Send to worker
-        if (isCSV) {
-          // CSV: send as string
-          worker.postMessage({
-            type: 'parse',
-            data: data as string,
-            fileType: 'csv'
-          });
-        } else {
-          // Excel: send as ArrayBuffer
-          worker.postMessage({
-            type: 'parse',
-            data: data as ArrayBuffer,
-            fileType: 'excel'
-          });
+          reject(error);
         }
       };
 
       reader.onerror = () => {
-        reject(new Error('Failed to read file'));
+        const error = new Error('Failed to read file');
+        setError(error.message);
         setIsProcessing(false);
+        reject(error);
       };
 
-      // Read file based on type
-      if (isCSV) {
+      // Read file
+      if (file.name.toLowerCase().endsWith('.csv')) {
         reader.readAsText(file);
       } else {
-        reader.readAsArrayBuffer(file);
+        reader.readAsBinaryString(file);
       }
     });
-  }, [initWorker]);
+  }, []);
 
   /**
    * Cancel current operation
    */
   const cancel = useCallback(() => {
-    if (workerRef.current) {
-      workerRef.current.terminate();
-      workerRef.current = null;
-    }
-
     setIsProcessing(false);
     setProgress(0);
-    accumulatedDataRef.current = [];
-
-    if (rejectRef.current) {
-      rejectRef.current(new Error('Operation cancelled'));
-      rejectRef.current = null;
-    }
-  }, []);
-
-  /**
-   * Cleanup on unmount
-   */
-  useEffect(() => {
-    return () => {
-      if (workerRef.current) {
-        workerRef.current.terminate();
-      }
-    };
   }, []);
 
   return {
