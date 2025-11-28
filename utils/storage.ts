@@ -1,74 +1,91 @@
 import { Project, ProjectTab } from '../types';
+import { supabase } from './supabase';
 
-const DB_NAME = 'RealDataDB';
-const DB_VERSION = 1;
-const STORE_NAME = 'projects';
 const CONFIG_KEY = 'real_data_config_v1';
 
-// Open Database Connection
-const openDB = (): Promise<IDBDatabase> => {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-
-    request.onerror = (event) => reject("IndexedDB error");
-
-    request.onupgradeneeded = (event: any) => {
-      const db = event.target.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-      }
-    };
-
-    request.onsuccess = (event: any) => {
-      resolve(event.target.result);
-    };
-  });
+// Helper: Convert database row to Project type
+const dbToProject = (row: any): Project => {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    lastModified: row.last_modified,
+    data: row.data || [],
+    columns: row.columns || [],
+    transformRules: row.transform_rules || undefined,
+    dashboard: row.dashboard || undefined,
+    reportConfig: row.report_config || undefined,
+    aiSettings: row.ai_settings || undefined,
+    aiPresets: row.ai_presets || undefined,
+  };
 };
 
-// --- Async CRUD Operations ---
+// Helper: Convert Project to database row
+const projectToDb = (project: Project) => {
+  return {
+    id: project.id,
+    name: project.name,
+    description: project.description,
+    last_modified: project.lastModified,
+    data: project.data,
+    columns: project.columns,
+    transform_rules: project.transformRules,
+    dashboard: project.dashboard,
+    report_config: project.reportConfig,
+    ai_settings: project.aiSettings,
+    ai_presets: project.aiPresets,
+    updated_at: new Date().toISOString(),
+  };
+};
+
+// --- CRUD Operations with Supabase ---
 
 export const getProjects = async (): Promise<Project[]> => {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], 'readonly');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.getAll();
+  const { data, error } = await supabase
+    .from('projects')
+    .select('*')
+    .order('last_modified', { ascending: false });
 
-    request.onsuccess = () => resolve(request.result || []);
-    request.onerror = () => reject(request.error);
-  });
+  if (error) {
+    console.error('Error fetching projects:', error);
+    throw new Error(error.message);
+  }
+
+  return (data || []).map(dbToProject);
 };
 
 export const saveProject = async (project: Project): Promise<void> => {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], 'readwrite');
-    const store = transaction.objectStore(STORE_NAME);
-    
-    // Ensure lastModified is updated
-    // transformRules and other new fields will be saved automatically as long as they are part of the object
-    const updatedProject = { ...project, lastModified: Date.now() };
-    
-    const request = store.put(updatedProject);
+  // Ensure lastModified is updated
+  const updatedProject = {
+    ...project,
+    lastModified: Date.now()
+  };
 
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
+  const dbProject = projectToDb(updatedProject);
+
+  const { error } = await supabase
+    .from('projects')
+    .upsert(dbProject, { onConflict: 'id' });
+
+  if (error) {
+    console.error('Error saving project:', error);
+    throw new Error(error.message);
+  }
 };
 
 export const deleteProject = async (id: string): Promise<void> => {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], 'readwrite');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.delete(id);
+  const { error } = await supabase
+    .from('projects')
+    .delete()
+    .eq('id', id);
 
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
+  if (error) {
+    console.error('Error deleting project:', error);
+    throw new Error(error.message);
+  }
 };
 
-// --- Sync LocalStorage for UI Config Only ---
+// --- LocalStorage for UI Config (unchanged) ---
 
 export const saveLastState = (projectId: string, tab: ProjectTab) => {
   localStorage.setItem(CONFIG_KEY, JSON.stringify({ projectId, tab }));
