@@ -21,7 +21,8 @@ import {
   LegendConfig,
   CategoryConfig,
   InteractionConfig,
-  StyleConfig
+  StyleConfig,
+  SeriesConfig
 } from '../types';
 import {
   ResponsiveContainer,
@@ -222,11 +223,25 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   const [measureCol, setMeasureCol] = useState('');
   const [limit, setLimit] = useState<number>(10);
   const [width, setWidth] = useState<'half' | 'full'>('half');
+  const [seriesList, setSeriesList] = useState<SeriesConfig[]>([]);
   const [categoryConfig, setCategoryConfig] = useState<Record<string, CategoryConfig>>({});
   const [templateId, setTemplateId] = useState<string>('');
   const [interaction, setInteraction] = useState<InteractionConfig>({ enableBrush: true, enableCrosshair: true, quickRanges: [10] });
-  const [styleConfig, setStyleConfig] = useState<StyleConfig>({ lineWidth: 2, markerSize: 4, barRadius: 4, palette: COLORS, smoothLines: true, background: '#ffffff' });
+  const defaultStyle: StyleConfig = { lineWidth: 2, markerSize: 4, barRadius: 4, palette: COLORS, smoothLines: true, background: '#ffffff', areaOpacity: 0.3, cardRadius: 12, showShadow: false };
+  const [styleConfig, setStyleConfig] = useState<StyleConfig>(defaultStyle);
   const palette = useMemo(() => styleConfig.palette || COLORS, [styleConfig.palette]);
+
+  const createSeries = (index: number, base?: Partial<SeriesConfig>): SeriesConfig => ({
+    id: base?.id || `series-${Date.now().toString(36)}-${index}`,
+    label: base?.label || `Series ${index + 1}`,
+    type: base?.type || (type === 'line' ? 'line' : type === 'area' ? 'area' : 'bar'),
+    measure: base?.measure || measure,
+    measureCol: base?.measureCol || measureCol || undefined,
+    filters: base?.filters || [],
+    yAxis: base?.yAxis || 'left',
+    color: base?.color || palette[index % palette.length],
+    dataLabels: base?.dataLabels || dataLabels,
+  });
 
   // Style state
   const [chartTitle, setChartTitle] = useState('');
@@ -274,30 +289,98 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       setTitle(initialWidget.title);
       setType(initialWidget.type);
       setDimension(initialWidget.dimension);
-      setMeasure(initialWidget.measure || 'count');
+      const baseMeasure = initialWidget.measure || 'count';
+      setMeasure(baseMeasure);
       setMeasureCol(initialWidget.measureCol || '');
       setLimit(initialWidget.limit || 10);
       setWidth(initialWidget.width);
       setCategoryConfig(initialWidget.categoryConfig || {});
       setTemplateId(initialWidget.templateId || '');
       setInteraction(initialWidget.interaction || { enableBrush: true, enableCrosshair: true, quickRanges: [10] });
-      setStyleConfig(initialWidget.style || { lineWidth: 2, markerSize: 4, barRadius: 4, palette: COLORS });
+      setStyleConfig(initialWidget.style ? { ...defaultStyle, ...initialWidget.style } : defaultStyle);
       setChartTitle(initialWidget.chartTitle || initialWidget.title);
       setSubtitle(initialWidget.subtitle || '');
       if (initialWidget.legend) setLegend(initialWidget.legend);
       if (initialWidget.dataLabels) setDataLabels(initialWidget.dataLabels);
       setXAxis(initialWidget.xAxis || xAxis);
       setLeftYAxis(initialWidget.leftYAxis || leftYAxis);
+      if (initialWidget.series && initialWidget.series.length > 0) {
+        setSeriesList(initialWidget.series);
+      } else {
+        setSeriesList([
+          createSeries(0, {
+            id: `series-${initialWidget.id || 'primary'}`,
+            label: initialWidget.title || 'Series 1',
+            measure: baseMeasure,
+            measureCol: initialWidget.measureCol,
+            type: initialWidget.type === 'line' ? 'line' : initialWidget.type === 'area' ? 'area' : 'bar',
+            color: palette[0],
+          })
+        ]);
+      }
     } else {
       if (availableColumns.length > 0) {
         setDimension(availableColumns[0]);
       }
+      setStyleConfig(defaultStyle);
+      setSeriesList([createSeries(0)]);
     }
   }, [initialWidget, availableColumns]);
 
-  // Aggregate data for preview
+  // Aggregate data for preview (multi-series aware)
   const previewData = useMemo(() => {
     if (!dimension || data.length === 0) return [];
+
+    if (seriesList.length > 0) {
+      const buckets: Record<string, any> = {};
+
+      seriesList.forEach(series => {
+        data.forEach(row => {
+          const dimValue = String(row[dimension] || 'N/A');
+          if (!buckets[dimValue]) buckets[dimValue] = { name: dimValue };
+
+          if (series.measure === 'count') {
+            buckets[dimValue][series.id] = (buckets[dimValue][series.id] || 0) + 1;
+          } else if (series.measure === 'sum' && series.measureCol) {
+            const val = parseFloat(String(row[series.measureCol])) || 0;
+            buckets[dimValue][series.id] = (buckets[dimValue][series.id] || 0) + val;
+          } else if (series.measure === 'avg' && series.measureCol) {
+            if (!buckets[dimValue][`${series.id}_sum`]) {
+              buckets[dimValue][`${series.id}_sum`] = 0;
+              buckets[dimValue][`${series.id}_count`] = 0;
+            }
+            const val = parseFloat(String(row[series.measureCol])) || 0;
+            buckets[dimValue][`${series.id}_sum`] += val;
+            buckets[dimValue][`${series.id}_count`] += 1;
+          }
+        });
+      });
+
+      Object.values(buckets).forEach((bucket: any) => {
+        seriesList.forEach(series => {
+          if (series.measure === 'avg') {
+            const count = bucket[`${series.id}_count`] || 0;
+            if (count > 0) {
+              bucket[series.id] = bucket[`${series.id}_sum`] / count;
+            }
+            delete bucket[`${series.id}_sum`];
+            delete bucket[`${series.id}_count`];
+          }
+        });
+      });
+
+      return Object.values(buckets)
+        .map((bucket: any) => ({
+          ...bucket,
+          __total: seriesList.reduce((sum, s) => sum + (bucket[s.id] || 0), 0)
+        }))
+        .sort((a: any, b: any) => b.__total - a.__total)
+        .slice(0, limit)
+        .map((bucket: any) => {
+          const { __total, ...rest } = bucket;
+          return rest;
+        });
+    }
 
     const groups: Record<string, number> = {};
 
@@ -322,7 +405,6 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       }
     });
 
-    // Finalize averages
     if (measure === 'avg') {
       Object.keys(groups).filter(k => !k.includes('_')).forEach(k => {
         const count = groups[`${k}_count`] || 0;
@@ -332,7 +414,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       });
     }
 
-  const result = Object.keys(groups)
+    return Object.keys(groups)
       .filter(k => !k.includes('_'))
       .map(k => ({
         name: k,
@@ -340,9 +422,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       }))
       .sort((a, b) => b.value - a.value)
       .slice(0, limit);
-
-  return result;
-}, [dimension, measure, measureCol, data, limit]);
+  }, [dimension, measure, measureCol, data, limit, seriesList]);
 
   const applyTemplate = (templateIdToApply: string) => {
     const template = chartTemplates.find(t => t.id === templateIdToApply);
@@ -374,13 +454,15 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   };
 
   const handleSave = () => {
+    const primarySeries = seriesList[0];
     const widget: DashboardWidget = {
       id: initialWidget?.id || generateId(),
       title,
       type,
       dimension,
-      measure,
-      measureCol: measureCol || undefined,
+      measure: primarySeries?.measure || measure,
+      measureCol: primarySeries?.measureCol || measureCol || undefined,
+      series: seriesList,
       limit,
       width,
       templateId,
@@ -484,7 +566,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                     {type === 'pie' ? (
                       <PieChart>
                         <Pie
-                          data={previewData}
+                          data={(seriesList.length > 0 ? previewData.map(d => ({ name: (d as any).name, value: d[seriesList[0].id] || 0 })) : previewData) as any[]}
                           dataKey="value"
                           nameKey="name"
                           cx="50%"
@@ -496,14 +578,14 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                           {previewData.map((entry, index) => (
                             <Cell
                               key={`cell-${index}`}
-                              fill={categoryConfig[entry.name]?.color || palette[index % palette.length]}
+                              fill={categoryConfig[(entry as any).name]?.color || palette[index % palette.length]}
                             />
                           ))}
                         </Pie>
                         {legend.enabled && <RechartsLegend />}
                         <Tooltip />
                       </PieChart>
-                    ) : type === 'line' ? (
+                    ) : (
                       <ComposedChart data={previewData}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                         <XAxis
@@ -515,6 +597,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                           style={{ outline: 'none' }}
                         />
                         <YAxis
+                          yAxisId="left"
                           tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }}
                           domain={[
                             leftYAxis.min === 'auto' ? 'auto' : leftYAxis.min,
@@ -522,75 +605,51 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                           ]}
                           style={{ outline: 'none' }}
                         />
+                        {seriesList.some(s => s.yAxis === 'right') && (
+                          <YAxis
+                            yAxisId="right"
+                            orientation="right"
+                            tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }}
+                            domain={[leftYAxis.min === 'auto' ? 'auto' : leftYAxis.min, leftYAxis.max === 'auto' ? 'auto' : leftYAxis.max]}
+                            style={{ outline: 'none' }}
+                          />
+                        )}
                         <Tooltip />
                         {legend.enabled && <RechartsLegend />}
-                        <Line
-                          type={styleConfig.smoothLines ? 'monotone' : 'linear'}
-                          dataKey="value"
-                          stroke={palette[0]}
-                          strokeWidth={styleConfig.lineWidth || 2}
-                          dot={{ r: styleConfig.markerSize || 4 }}
-                          style={{ outline: 'none' }}
-                        >
-                          {dataLabels.enabled && (
-                            <LabelList
-                              dataKey="value"
-                              position={dataLabels.position as any}
-                              style={{
-                                fontSize: dataLabels.fontSize,
-                                fontWeight: dataLabels.fontWeight,
-                                fill: dataLabels.color
-                              }}
-                            />
-                          )}
-                        </Line>
+                        {(seriesList.length > 0
+                          ? seriesList
+                          : [{ id: 'value', label: 'Values', type: type === 'line' ? 'line' : type === 'area' ? 'area' : 'bar', color: palette[0], yAxis: 'left' as const }]
+                        ).map((series, idx) => {
+                          const Component = series.type === 'line' ? Line : series.type === 'area' ? Area : Bar;
+                          return (
+                            <Component
+                              key={series.id}
+                              yAxisId={series.yAxis || 'left'}
+                              dataKey={series.id}
+                              name={series.label || `Series ${idx + 1}`}
+                              type={styleConfig.smoothLines ? 'monotone' : 'linear'}
+                              fill={series.color || palette[idx % palette.length]}
+                              stroke={series.color || palette[idx % palette.length]}
+                              fillOpacity={series.type === 'area' ? styleConfig.areaOpacity ?? 0.3 : 1}
+                              strokeWidth={series.type === 'line' ? (styleConfig.lineWidth || 2) : 0}
+                              radius={series.type === 'bar' && styleConfig.barRadius ? [styleConfig.barRadius, styleConfig.barRadius, 0, 0] : undefined}
+                              onDoubleClick={(data: any) => handleBarDoubleClick(data.name)}
+                            >
+                              {dataLabels.enabled && (
+                                <LabelList
+                                  dataKey={series.id}
+                                  position={dataLabels.position as any}
+                                  style={{
+                                    fontSize: dataLabels.fontSize,
+                                    fontWeight: dataLabels.fontWeight,
+                                    fill: dataLabels.color
+                                  }}
+                                />
+                              )}
+                            </Component>
+                          );
+                        })}
                       </ComposedChart>
-                    ) : (
-                      <BarChart data={previewData}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis
-                          dataKey="name"
-                          angle={xAxis.slant || 0}
-                          textAnchor={xAxis.slant ? 'end' : 'middle'}
-                          height={xAxis.slant === 90 ? 100 : xAxis.slant === 45 ? 80 : 60}
-                          tick={{ fontSize: xAxis.fontSize, fill: xAxis.fontColor }}
-                          style={{ outline: 'none' }}
-                        />
-                        <YAxis
-                          tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }}
-                          domain={[
-                            leftYAxis.min === 'auto' ? 'auto' : leftYAxis.min,
-                            leftYAxis.max === 'auto' ? 'auto' : leftYAxis.max
-                          ]}
-                          style={{ outline: 'none' }}
-                        />
-                        <Tooltip />
-                        {legend.enabled && <RechartsLegend />}
-                        <Bar
-                          dataKey="value"
-                          onDoubleClick={(data: any) => handleBarDoubleClick(data.name)}
-                          radius={styleConfig.barRadius ? [styleConfig.barRadius, styleConfig.barRadius, 0, 0] : undefined}
-                          style={{ cursor: 'pointer', outline: 'none' }}
-                        >
-                          {previewData.map((entry, idx) => (
-                            <Cell
-                              key={`cell-${idx}`}
-                              fill={categoryConfig[entry.name]?.color || palette[idx % palette.length]}
-                            />
-                          ))}
-                          {dataLabels.enabled && (
-                            <LabelList
-                              dataKey="value"
-                              position={dataLabels.position as any}
-                              style={{
-                                fontSize: dataLabels.fontSize,
-                                fontWeight: dataLabels.fontWeight,
-                                fill: dataLabels.color
-                              }}
-                            />
-                          )}
-                        </Bar>
-                      </BarChart>
                     )}
                   </ResponsiveContainer>
                 </div>
@@ -667,37 +726,151 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                     </select>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Measure</label>
-                      <select
-                        value={measure}
-                        onChange={(e) => setMeasure(e.target.value as AggregateMethod)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
-                        style={{ outline: 'none' }}
+                  <div className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+                    <div className="flex items-center justify-between mb-3">
+                      <div>
+                        <p className="text-sm font-semibold text-gray-800">Series</p>
+                        <p className="text-xs text-gray-500">Match Google Sheets: multiple value series with per-axis styling</p>
+                      </div>
+                      <button
+                        onClick={() => setSeriesList([...seriesList, createSeries(seriesList.length)])}
+                        className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700"
                       >
-                        <option value="count">Count</option>
-                        <option value="sum">Sum</option>
-                        <option value="avg">Average</option>
-                      </select>
+                        Add series
+                      </button>
                     </div>
 
-                    {(measure === 'sum' || measure === 'avg') && (
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Column</label>
-                        <select
-                          value={measureCol}
-                          onChange={(e) => setMeasureCol(e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
-                          style={{ outline: 'none' }}
-                        >
-                          <option value="">Select...</option>
-                          {availableColumns.map(col => (
-                            <option key={col} value={col}>{col}</option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
+                    <div className="space-y-3">
+                      {seriesList.map((series, idx) => (
+                        <div key={series.id} className="bg-white border border-gray-200 rounded-lg p-3 shadow-[0_1px_4px_rgba(0,0,0,0.03)]">
+                          <div className="flex items-start gap-3">
+                            <div className="flex-1 space-y-2">
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-700 mb-1">Label</label>
+                                  <input
+                                    type="text"
+                                    value={series.label}
+                                    onChange={(e) => {
+                                      const next = [...seriesList];
+                                      next[idx] = { ...series, label: e.target.value };
+                                      setSeriesList(next);
+                                    }}
+                                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-700 mb-1">Chart type</label>
+                                  <select
+                                    value={series.type}
+                                    onChange={(e) => {
+                                      const next = [...seriesList];
+                                      next[idx] = { ...series, type: e.target.value as SeriesConfig['type'] };
+                                      setSeriesList(next);
+                                    }}
+                                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                                  >
+                                    <option value="bar">Bar</option>
+                                    <option value="line">Line</option>
+                                    <option value="area">Area</option>
+                                  </select>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-3 gap-3">
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-700 mb-1">Aggregation</label>
+                                  <select
+                                    value={series.measure}
+                                    onChange={(e) => {
+                                      const next = [...seriesList];
+                                      const nextMeasure = e.target.value as AggregateMethod;
+                                      next[idx] = { ...series, measure: nextMeasure };
+                                      setSeriesList(next);
+                                      if (idx === 0) setMeasure(nextMeasure);
+                                    }}
+                                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                                  >
+                                    <option value="count">Count</option>
+                                    <option value="sum">Sum</option>
+                                    <option value="avg">Average</option>
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-700 mb-1">Value column</label>
+                                  <select
+                                    value={series.measureCol || ''}
+                                    onChange={(e) => {
+                                      const next = [...seriesList];
+                                      next[idx] = { ...series, measureCol: e.target.value };
+                                      setSeriesList(next);
+                                      if (idx === 0) setMeasureCol(e.target.value);
+                                    }}
+                                    disabled={series.measure === 'count'}
+                                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm disabled:bg-gray-100"
+                                  >
+                                    <option value="">Auto</option>
+                                    {availableColumns.map(col => (
+                                      <option key={col} value={col}>{col}</option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-700 mb-1">Y axis</label>
+                                  <select
+                                    value={series.yAxis}
+                                    onChange={(e) => {
+                                      const next = [...seriesList];
+                                      next[idx] = { ...series, yAxis: e.target.value as 'left' | 'right' };
+                                      setSeriesList(next);
+                                    }}
+                                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                                  >
+                                    <option value="left">Left axis</option>
+                                    <option value="right">Right axis</option>
+                                  </select>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-3">
+                                <div className="flex items-center gap-2 text-xs text-gray-600">
+                                  <span>Color</span>
+                                  <input
+                                    type="color"
+                                    value={series.color}
+                                    onChange={(e) => {
+                                      const next = [...seriesList];
+                                      next[idx] = { ...series, color: e.target.value };
+                                      setSeriesList(next);
+                                    }}
+                                    className="w-12 h-8 border border-gray-300 rounded"
+                                  />
+                                </div>
+                                <label className="flex items-center gap-2 text-xs text-gray-700">
+                                  <input
+                                    type="checkbox"
+                                    checked={series.type === 'line' && styleConfig.smoothLines}
+                                    onChange={(e) => setStyleConfig({ ...styleConfig, smoothLines: e.target.checked })}
+                                  />
+                                  Smooth lines
+                                </label>
+                              </div>
+                            </div>
+
+                            {seriesList.length > 1 && (
+                              <button
+                                onClick={() => setSeriesList(seriesList.filter((_, sIdx) => sIdx !== idx))}
+                                className="text-xs text-red-600 hover:text-red-700"
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
 
                   <div>
@@ -746,20 +919,25 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                         Categories ({previewData.length})
                       </label>
                       <div className="border border-gray-200 rounded p-3 max-h-40 overflow-y-auto bg-gray-50">
-                        {previewData.map((item, idx) => (
-                          <div
-                            key={idx}
-                            className="flex items-center gap-2 py-1 px-2 hover:bg-gray-100 rounded cursor-pointer"
-                            onDoubleClick={() => handleBarDoubleClick(item.name)}
-                          >
+                        {previewData.map((item: any, idx) => {
+                          const aggregatedValue = seriesList.length > 0
+                            ? seriesList.reduce((sum, s) => sum + (item[s.id] || 0), 0)
+                            : item.value;
+                          return (
                             <div
-                              className="w-4 h-4 rounded"
-                              style={{ backgroundColor: categoryConfig[item.name]?.color || COLORS[idx % COLORS.length] }}
-                            />
-                            <span className="text-sm text-gray-900">{item.name}</span>
-                            <span className="text-xs text-gray-500 ml-auto">{item.value.toFixed(0)}</span>
-                          </div>
-                        ))}
+                              key={idx}
+                              className="flex items-center gap-2 py-1 px-2 hover:bg-gray-100 rounded cursor-pointer"
+                              onDoubleClick={() => handleBarDoubleClick(item.name)}
+                            >
+                              <div
+                                className="w-4 h-4 rounded"
+                                style={{ backgroundColor: categoryConfig[item.name]?.color || COLORS[idx % COLORS.length] }}
+                              />
+                              <span className="text-sm text-gray-900">{item.name}</span>
+                              <span className="text-xs text-gray-500 ml-auto">{Math.round(aggregatedValue)}</span>
+                            </div>
+                          );
+                        })}
                       </div>
                       <p className="text-xs text-gray-500 mt-1">Double-click to change color</p>
                     </div>
@@ -865,6 +1043,37 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                           style={{ outline: 'none' }}
                         />
                       </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Area Fill Opacity: {(styleConfig.areaOpacity || 0.3).toFixed(2)}</label>
+                        <input
+                          type="range"
+                          min={0.1}
+                          max={1}
+                          step={0.05}
+                          value={styleConfig.areaOpacity || 0.3}
+                          onChange={(e) => setStyleConfig({ ...styleConfig, areaOpacity: parseFloat(e.target.value) })}
+                          className="w-full"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Card Radius: {styleConfig.cardRadius || 0}px</label>
+                        <input
+                          type="range"
+                          min={4}
+                          max={24}
+                          value={styleConfig.cardRadius || 0}
+                          onChange={(e) => setStyleConfig({ ...styleConfig, cardRadius: parseInt(e.target.value) })}
+                          className="w-full"
+                        />
+                      </div>
+                      <label className="flex items-center gap-2 text-xs text-gray-700">
+                        <input
+                          type="checkbox"
+                          checked={!!styleConfig.showShadow}
+                          onChange={(e) => setStyleConfig({ ...styleConfig, showShadow: e.target.checked })}
+                        />
+                        Lift card with subtle shadow
+                      </label>
                     </div>
                   </Section>
 

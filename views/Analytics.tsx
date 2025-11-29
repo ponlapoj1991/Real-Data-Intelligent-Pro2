@@ -619,7 +619,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                       name={s.label}
                       fill={s.color}
                       stroke={s.color}
-                      fillOpacity={s.type === 'area' ? 0.3 : 1}
+                      fillOpacity={s.type === 'area' ? widget.style?.areaOpacity ?? 0.3 : 1}
                         strokeWidth={s.type === 'line' ? (widget.style?.lineWidth || 2) : 0}
                         radius={widget.style?.barRadius ? [widget.style.barRadius, widget.style.barRadius, 0, 0] : undefined}
                       onClick={(barData: any) => handleChartClick(null, widget, barData[widget.dimension])}
@@ -759,9 +759,9 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                               label={showValues ? ({ name, value }) => `${name}: ${formatWidgetValue(widget, Number(value) || 0)}` : false}
                               labelLine={showValues}
                           >
-                              {(data as any[]).map((entry, index) => (
-                                  <Cell key={`cell-${index}`} fill={getWidgetColor(widget, entry.name, index)} />
-                              ))}
+                          {(data as any[]).map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={getWidgetColor(widget, entry.name, index)} />
+                            ))}
                           </Pie>
                           <Tooltip contentStyle={{borderRadius: '8px'}} />
                           {showLegend && <Legend iconType="circle" wrapperStyle={{fontSize: '12px'}} />}
@@ -915,10 +915,10 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                                            }} className="text-blue-500 hover:underline text-xs">View</button>
                                        </td>
                                    </tr>
-                               ))}
-                           </tbody>
-                       </table>
-                   </div>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                );
           default:
               return null;
@@ -1027,56 +1027,54 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       </div>
 
       {!isPresentationMode && (
-        <div className="mb-6 bg-white border border-gray-200 rounded-xl shadow-sm p-3">
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+        <div className="mb-4 bg-white border border-gray-200 rounded-lg shadow-sm p-2">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-gray-700">
+            <div className="flex items-center gap-2 font-semibold text-gray-900">
               <LayoutGrid className="w-4 h-4 text-blue-600" />
-              Saved views & layout
+              Saved views
             </div>
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <select
-                className="px-3 py-2 border border-gray-300 rounded-lg bg-white"
-                onChange={(e) => e.target.value && applySavedView(e.target.value)}
-                defaultValue=""
-              >
-                <option value="">Choose a saved view</option>
-                {savedViews.map(view => (
-                  <option key={view.id} value={view.id}>{view.name}</option>
-                ))}
-              </select>
+            <select
+              className="px-2 py-1.5 border border-gray-300 rounded-lg bg-white text-xs"
+              onChange={(e) => e.target.value && applySavedView(e.target.value)}
+              defaultValue=""
+            >
+              <option value="">Choose view</option>
+              {savedViews.map(view => (
+                <option key={view.id} value={view.id}>{view.name}</option>
+              ))}
+            </select>
+            <button
+              onClick={handleSaveViewConfig}
+              className="px-2.5 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              Save
+            </button>
+            {savedViews.length > 0 && (
               <button
-                onClick={handleSaveViewConfig}
-                className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                onClick={() => {
+                  const id = window.prompt('Type the exact saved view name to delete');
+                  const target = savedViews.find(v => v.name === id);
+                  if (target) deleteSavedView(target.id);
+                }}
+                className="px-2.5 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50"
               >
-                Save view
+                Delete
               </button>
-              {savedViews.length > 0 && (
-                <button
-                  onClick={() => {
-                    const id = window.prompt('Type the exact saved view name to delete');
-                    const target = savedViews.find(v => v.name === id);
-                    if (target) deleteSavedView(target.id);
-                  }}
-                  className="px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
-                >
-                  Delete
-                </button>
-              )}
-              <div className="flex items-center gap-2 ml-auto">
-                <span className="text-xs text-gray-500">Layout</span>
-                <button
-                  onClick={() => setComparisonLayout('balanced')}
-                  className={`px-3 py-1.5 border rounded-lg text-sm ${comparisonLayout === 'balanced' ? 'bg-blue-100 border-blue-500 text-blue-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}
-                >
-                  Two columns
-                </button>
-                <button
-                  onClick={() => setComparisonLayout('dense')}
-                  className={`px-3 py-1.5 border rounded-lg text-sm ${comparisonLayout === 'dense' ? 'bg-blue-100 border-blue-500 text-blue-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}
-                >
-                  Compact grid
-                </button>
-              </div>
+            )}
+            <div className="flex items-center gap-2 ml-auto">
+              <span className="text-[11px] text-gray-500">Layout</span>
+              <button
+                onClick={() => setComparisonLayout('balanced')}
+                className={`px-2.5 py-1 border rounded-lg text-xs ${comparisonLayout === 'balanced' ? 'bg-blue-100 border-blue-500 text-blue-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+              >
+                Two cols
+              </button>
+              <button
+                onClick={() => setComparisonLayout('dense')}
+                className={`px-2.5 py-1 border rounded-lg text-xs ${comparisonLayout === 'dense' ? 'bg-blue-100 border-blue-500 text-blue-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+              >
+                Compact
+              </button>
             </div>
           </div>
         </div>
@@ -1139,13 +1137,18 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       )}
 
       {/* Dashboard Grid */}
-      <div ref={dashboardRef} className={`grid ${gridColumns} gap-6 pb-10`}>
-          {widgets.map((widget) => (
-              <div 
-                key={widget.id} 
-                className={`report-widget bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col ${widget.width === 'full' ? 'lg:col-span-2' : ''} transition-all hover:shadow-md group relative`}
-                style={{ minHeight: '320px' }}
-              >
+        <div ref={dashboardRef} className={`grid ${gridColumns} gap-6 pb-10`}>
+            {widgets.map((widget) => {
+                const cardStyle = widget.style || {};
+                const cardRadius = cardStyle.cardRadius ?? 12;
+                const cardBackground = cardStyle.background || 'white';
+                const cardShadow = cardStyle.showShadow ? 'shadow-md' : 'shadow-sm';
+                return (
+                  <div
+                    key={widget.id}
+                    className={`report-widget p-5 border border-gray-200 flex flex-col ${widget.width === 'full' ? 'lg:col-span-2' : ''} transition-all group relative ${cardShadow}`}
+                    style={{ minHeight: '320px', background: cardBackground, borderRadius: `${cardRadius}px` }}
+                  >
                   {/* Widget Header */}
                   <div className="flex justify-between items-start mb-4">
                       <div>
@@ -1185,7 +1188,8 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                       </div>
                   )}
               </div>
-          ))}
+              );
+          })}
           
           {!isPresentationMode && widgets.length === 0 && (
               <div className="col-span-full">
@@ -1255,7 +1259,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                                            </td>
                                        ))}
                                    </tr>
-                               ))}
+                                  ))}
                            </tbody>
                       </table>
                       {drillDown.data.length > 200 && (

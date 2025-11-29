@@ -162,6 +162,9 @@ export interface StyleConfig {
   barRadius?: number;
   smoothLines?: boolean;
   background?: string;
+  areaOpacity?: number;
+  cardRadius?: number;
+  showShadow?: boolean;
 }
 
 export interface DashboardWidget {
