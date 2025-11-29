@@ -4,8 +4,8 @@ import { Project, DashboardWidget, DashboardFilter, DrillDownState, RawRow } fro
 import {
     PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, AreaChart, Area, LabelList, ComposedChart, Legend as RechartsLegend
 } from 'recharts';
-import { Sparkles, Bot, Loader2, Plus, LayoutGrid, Trash2, Pencil, Filter, X, Presentation, FileOutput, Eye, EyeOff, Table, Download, ChevronRight, MousePointer2, MousePointerClick, MessageSquarePlus, Command } from 'lucide-react';
-import { analyzeProjectData, generateWidgetFromPrompt, DataSummary } from '../utils/ai';
+import { Bot, Loader2, Plus, LayoutGrid, Trash2, Pencil, Filter, X, Presentation, FileOutput, Eye, EyeOff, Table, Download, ChevronRight, MousePointer2 } from 'lucide-react';
+import { analyzeProjectData, DataSummary } from '../utils/ai';
 import { applyTransformation } from '../utils/transform';
 import { saveProject } from '../utils/storage-compat';
 import { generatePowerPoint } from '../utils/report';
@@ -52,10 +52,6 @@ const formatWidgetValue = (widget: DashboardWidget, val: number) => {
 const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
-  
-  // Generative Chart State
-  const [prompt, setPrompt] = useState('');
-  const [isGeneratingChart, setIsGeneratingChart] = useState(false);
 
   // Dashboard State
   const [widgets, setWidgets] = useState<DashboardWidget[]>(project.dashboard || []);
@@ -202,29 +198,6 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
           await generatePowerPoint(project, dashboardRef.current!, filterStr);
           setIsExporting(false);
       }, 100);
-  };
-  
-  // --- Generative AI Chart Logic ---
-  const handleAskData = async (e: React.FormEvent) => {
-      e.preventDefault();
-      if (!prompt.trim()) return;
-
-      setIsGeneratingChart(true);
-      try {
-          // Pass Project AI Settings
-          const generatedWidget = await generateWidgetFromPrompt(prompt, availableColumns, baseData, project.aiSettings);
-          if (generatedWidget) {
-              await handleSaveWidget(generatedWidget);
-              setPrompt('');
-          } else {
-              alert("Sorry, I couldn't understand how to visualize that based on your data columns. Try being more specific.");
-          }
-      } catch (err) {
-          console.error(err);
-          alert("Failed to generate chart. Check your AI Settings.");
-      } finally {
-          setIsGeneratingChart(false);
-      }
   };
 
   // --- Interaction Handler (Drill vs Filter) ---
@@ -904,59 +877,20 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
         </div>
       </div>
 
-      {/* INTELLIGENT COMMAND CENTER (Generative UI) */}
+      {/* AI INSIGHTS (Optional) */}
       {!isPresentationMode && (
-         <div className="mb-8 relative z-20">
-             <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl transform rotate-1 opacity-10"></div>
-             <div className="bg-white border border-indigo-100 rounded-xl p-6 shadow-sm relative overflow-hidden">
-                <div className="flex flex-col md:flex-row gap-6">
-                    {/* Ask Data Section */}
-                    <div className="flex-1">
-                        <h3 className="text-lg font-bold text-gray-800 flex items-center mb-2">
-                             <Sparkles className="w-5 h-5 text-indigo-500 mr-2" />
-                             Ask Your Data
-                        </h3>
-                        <p className="text-sm text-gray-500 mb-4">
-                            Describe the chart you want to see, and AI will build it for you.
-                        </p>
-                        <form onSubmit={handleAskData} className="relative">
-                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                <Command className="h-4 w-4 text-gray-400" />
-                            </div>
-                            <input
-                                type="text"
-                                value={prompt}
-                                onChange={(e) => setPrompt(e.target.value)}
-                                placeholder="e.g. Show me sentiment breakdown by platform..."
-                                className="block w-full pl-10 pr-24 py-3 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm shadow-sm"
-                                disabled={isGeneratingChart}
-                            />
-                            <button
-                                type="submit"
-                                disabled={!prompt.trim() || isGeneratingChart}
-                                className="absolute inset-y-1 right-1 px-4 py-1.5 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700 focus:outline-none disabled:opacity-50 flex items-center"
-                            >
-                                {isGeneratingChart ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Generate'}
-                            </button>
-                        </form>
-                    </div>
-
-                    {/* Quick Insight Section */}
-                    <div className="w-full md:w-1/3 border-t md:border-t-0 md:border-l border-gray-100 pt-4 md:pt-0 md:pl-6 flex flex-col justify-center">
-                         <button 
-                            onClick={handleAnalyze} 
-                            disabled={isAnalyzing}
-                            className="w-full py-3 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 rounded-lg text-sm font-medium flex items-center justify-center transition-all group"
-                        >
-                            {isAnalyzing ? (
-                                <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Analyzing...</>
-                            ) : (
-                                <><Bot className="w-5 h-5 mr-2 group-hover:scale-110 transition-transform" /> Get AI Executive Summary</>
-                            )}
-                        </button>
-                    </div>
-                </div>
-             </div>
+         <div className="mb-8">
+             <button
+                onClick={handleAnalyze}
+                disabled={isAnalyzing}
+                className="w-full md:w-auto px-6 py-3 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 rounded-lg text-sm font-medium flex items-center justify-center transition-all group shadow-sm"
+             >
+                {isAnalyzing ? (
+                    <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Analyzing...</>
+                ) : (
+                    <><Bot className="w-5 h-5 mr-2 group-hover:scale-110 transition-transform" /> Get AI Executive Summary</>
+                )}
+             </button>
          </div>
       )}
 

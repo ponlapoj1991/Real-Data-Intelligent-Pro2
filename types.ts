@@ -141,6 +141,13 @@ export interface LegendConfig {
   alignment?: 'left' | 'center' | 'right';
 }
 
+// Per-Category Configuration (for bar charts)
+export interface CategoryConfig {
+  color?: string;
+  label?: string;  // Override label
+  hidden?: boolean; // Hide this category
+}
+
 export interface DashboardWidget {
   id: string;
   title: string;
@@ -177,6 +184,9 @@ export interface DashboardWidget {
 
   // Data Labels (NEW)
   dataLabels?: DataLabelConfig;
+
+  // Per-Category Configuration (NEW)
+  categoryConfig?: Record<string, CategoryConfig>;  // { 'Facebook': { color: '#1877F2' } }
 
   // Legacy Visual Options (for backward compatibility)
   showValues?: boolean;
