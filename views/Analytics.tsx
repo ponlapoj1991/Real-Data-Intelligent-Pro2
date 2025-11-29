@@ -466,7 +466,13 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
   };
 
   const renderWidget = (widget: DashboardWidget) => {
-      // NEW: Multi-Series Chart Rendering (Google Sheets Style)
+      try {
+        // Validation: Ensure widget has required fields
+        if (!widget.dimension && widget.type !== 'kpi') {
+          return <div className="flex items-center justify-center h-full text-gray-400 text-sm">Invalid widget: Missing dimension</div>;
+        }
+
+        // NEW: Multi-Series Chart Rendering (Google Sheets Style)
       if (widget.series && widget.series.length > 0 && widget.type !== 'pie' && widget.type !== 'kpi' && widget.type !== 'wordcloud' && widget.type !== 'table') {
         const data = processMultiSeriesData(widget);
         if (!data || data.length === 0) return <div className="flex items-center justify-center h-full text-gray-400 text-sm">No Data</div>;
@@ -796,6 +802,26 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
           default:
               return null;
       }
+    } catch (error) {
+      console.error('Error rendering widget:', widget.id, error);
+      return (
+        <div className="flex flex-col items-center justify-center h-full text-red-500 text-sm p-4">
+          <p className="font-bold mb-2">Error rendering chart</p>
+          <p className="text-xs text-gray-600 mb-4">{widget.title}</p>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (confirm('This chart has errors. Delete it?')) {
+                handleDeleteWidget(e, widget.id);
+              }
+            }}
+            className="px-3 py-1.5 bg-red-600 text-white rounded text-xs hover:bg-red-700"
+          >
+            Delete Chart
+          </button>
+        </div>
+      );
+    }
   };
 
   if (baseData.length === 0) {

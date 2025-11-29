@@ -609,12 +609,28 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   };
 
   const handleSave = () => {
+    // Validation
+    if (!title.trim()) {
+      alert('Please enter a widget title');
+      return;
+    }
+
+    if (!dimension && type !== 'kpi') {
+      alert('Please select a dimension (X-Axis)');
+      return;
+    }
+
+    if (series.length === 0 && type !== 'kpi' && type !== 'table') {
+      alert('Please add at least one series');
+      return;
+    }
+
     const widget: DashboardWidget = {
       id: initialWidget?.id || generateId(),
       title,
       type,
       dimension,
-      series,
+      series: series.length > 0 ? series : undefined,
       limit,
       width,
       chartTitle,
