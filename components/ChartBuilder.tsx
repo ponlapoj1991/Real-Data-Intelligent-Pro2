@@ -283,6 +283,20 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   const [openSections, setOpenSections] = useState<Set<string>>(new Set());
   const [categoryModal, setCategoryModal] = useState<{ isOpen: boolean; category: string } | null>(null);
 
+  const handleTypeChange = (nextType: ChartType) => {
+    setType(nextType);
+
+    if (nextType === 'combo') {
+      setSeriesList(prev => {
+        const ensureTwo = prev.length >= 2 ? prev : [...prev, createSeries(prev.length, { type: 'line' })];
+        return ensureTwo.map((s, idx) => ({ ...s, type: idx === 0 ? 'bar' : s.type }));
+      });
+      return;
+    }
+
+    setSeriesList(prev => prev.map(s => ({ ...s, type: nextType === 'line' ? 'line' : nextType === 'area' ? 'area' : 'bar' })));
+  };
+
   // Initialize
   useEffect(() => {
     if (initialWidget) {
@@ -454,7 +468,19 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   };
 
   const handleSave = () => {
-    const primarySeries = seriesList[0];
+    if (!dimension) {
+      alert('Please select a dimension for the X-axis.');
+      return;
+    }
+
+    const normalizedSeries = seriesList.length > 0 ? seriesList : [createSeries(0)];
+    const invalidMeasure = normalizedSeries.some(s => (s.measure === 'sum' || s.measure === 'avg') && !s.measureCol);
+    if (invalidMeasure) {
+      alert('Select a value column for SUM or AVERAGE series.');
+      return;
+    }
+
+    const primarySeries = normalizedSeries[0];
     const widget: DashboardWidget = {
       id: initialWidget?.id || generateId(),
       title,
@@ -462,7 +488,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       dimension,
       measure: primarySeries?.measure || measure,
       measureCol: primarySeries?.measureCol || measureCol || undefined,
-      series: seriesList,
+      series: normalizedSeries,
       limit,
       width,
       templateId,
@@ -697,13 +723,14 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                     <label className="block text-sm font-medium text-gray-700 mb-2">Chart Type</label>
                     <select
                       value={type}
-                      onChange={(e) => setType(e.target.value as ChartType)}
+                      onChange={(e) => handleTypeChange(e.target.value as ChartType)}
                       className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
                       style={{ outline: 'none' }}
                     >
                       <option value="bar">Bar</option>
                       <option value="line">Line</option>
                       <option value="area">Area</option>
+                      <option value="combo">Combo (Bar + Line)</option>
                       <option value="pie">Pie</option>
                       <option value="kpi">KPI</option>
                       <option value="wordcloud">Word Cloud</option>
