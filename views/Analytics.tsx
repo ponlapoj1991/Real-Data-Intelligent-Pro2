@@ -1024,11 +1024,11 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
           
           {!isPresentationMode && widgets.length === 0 && (
               <div className="col-span-full">
-                  <EmptyState 
-                    icon={MessageSquarePlus}
+                  <EmptyState
+                    icon={LayoutGrid}
                     title="Your dashboard is empty"
-                    description="Use the 'Ask Your Data' bar above to instantly generate charts with AI, or click 'Add Chart' to build one manually."
-                    actionLabel="Add Chart Manually"
+                    description="Click 'Add Chart' to create your first visualization."
+                    actionLabel="Add Chart"
                     onAction={handleAddWidget}
                   />
               </div>
