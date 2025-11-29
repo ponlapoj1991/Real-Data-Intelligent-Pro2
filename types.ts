@@ -160,6 +160,8 @@ export interface StyleConfig {
   lineWidth?: number;
   markerSize?: number;
   barRadius?: number;
+  smoothLines?: boolean;
+  background?: string;
 }
 
 export interface DashboardWidget {

@@ -4,15 +4,13 @@ import { Project, DashboardWidget, DashboardFilter, DrillDownState, RawRow } fro
 import {
     PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, AreaChart, Area, LabelList, ComposedChart, Legend as RechartsLegend
 } from 'recharts';
-import { Bot, Loader2, Plus, LayoutGrid, Trash2, Pencil, Filter, X, Presentation, FileOutput, Eye, EyeOff, Table, Download, ChevronRight, MousePointer2 } from 'lucide-react';
-import { analyzeProjectData, DataSummary } from '../utils/ai';
+import { Loader2, Plus, LayoutGrid, Trash2, Pencil, Filter, X, Presentation, FileOutput, Eye, EyeOff, Table, Download, ChevronRight, MousePointer2 } from 'lucide-react';
 import { applyTransformation } from '../utils/transform';
 import { saveProject } from '../utils/storage-compat';
 import { generatePowerPoint } from '../utils/report';
 import { exportToExcel } from '../utils/excel';
 import ChartBuilder from '../components/ChartBuilder';
 import EmptyState from '../components/EmptyState';
-import Skeleton from '../components/Skeleton';
 
 interface SavedView {
   id: string;
@@ -58,9 +56,6 @@ const formatWidgetValue = (widget: DashboardWidget, val: number) => {
 };
 
 const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
-
   // Dashboard State
   const [widgets, setWidgets] = useState<DashboardWidget[]>(project.dashboard || []);
   const [isBuilderOpen, setIsBuilderOpen] = useState(false);
@@ -172,7 +167,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
   };
 
   const handleSaveViewConfig = () => {
-    const name = window.prompt('ตั้งชื่อ Saved View');
+    const name = window.prompt('Name this saved view');
     if (!name) return;
     const newView: SavedView = {
       id: crypto.randomUUID(),
@@ -517,26 +512,6 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
     return sorted;
   };
 
-  const handleAnalyze = async () => {
-    setIsAnalyzing(true);
-    try {
-        const summary: DataSummary = {
-            totalRows: filteredData.length,
-            projectName: project.name,
-            channelDistribution: {},
-            sentimentDistribution: {},
-            topTags: []
-        };
-        // Pass AI Settings
-        const result = await analyzeProjectData(summary, project.aiSettings);
-        setAiAnalysis(result);
-    } catch (e) {
-        setAiAnalysis("Analysis unavailable at this moment. Check Settings.");
-    } finally {
-        setIsAnalyzing(false);
-    }
-  };
-
   const renderWidget = (widget: DashboardWidget) => {
       try {
         // Validation: Ensure widget has required fields
@@ -570,21 +545,21 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
             {quickRanges.length > 0 && (
               <div className="flex items-center gap-2 mb-2 text-xs text-gray-600 flex-wrap">
-                <span>ช่วงเร็ว:</span>
+                <span>Quick ranges:</span>
                 {quickRanges.map(rangeVal => (
                   <button
                     key={rangeVal}
                     onClick={() => updateRange(widget.id, Math.max(0, rawData.length - rangeVal), rawData.length - 1)}
                     className="px-2 py-1 border border-gray-300 rounded hover:bg-gray-50"
                   >
-                    ล่าสุด {rangeVal}
+                    Last {rangeVal}
                   </button>
                 ))}
                 <button
                   onClick={() => clearRange(widget.id)}
                   className="px-2 py-1 border border-gray-200 rounded text-gray-600 hover:bg-gray-50"
                 >
-                  ทั้งหมด
+                  Reset
                 </button>
               </div>
             )}
@@ -639,7 +614,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                     <Component
                       key={s.id}
                       yAxisId={s.yAxis}
-                      type="monotone"
+                      type={widget.style?.smoothLines ? 'monotone' : 'linear'}
                       dataKey={s.id}
                       name={s.label}
                       fill={s.color}
@@ -805,21 +780,21 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                   <div className="h-full flex flex-col">
                     {quickRanges.length > 0 && (
                       <div className="flex items-center gap-2 mb-2 text-xs text-gray-600 flex-wrap">
-                        <span>ช่วงเร็ว:</span>
+                        <span>Quick ranges:</span>
                         {quickRanges.map(rangeVal => (
                           <button
                             key={rangeVal}
                             onClick={() => updateRange(widget.id, Math.max(0, sortedData.length - rangeVal), sortedData.length - 1)}
                             className="px-2 py-1 border border-gray-300 rounded hover:bg-gray-50"
                           >
-                            ล่าสุด {rangeVal}
+                            Last {rangeVal}
                           </button>
                         ))}
                         <button
                           onClick={() => clearRange(widget.id)}
                           className="px-2 py-1 border border-gray-200 rounded text-gray-600 hover:bg-gray-50"
                         >
-                          ทั้งหมด
+                          Reset
                         </button>
                       </div>
                     )}
@@ -834,7 +809,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                           <YAxis tick={{fontSize: 11}} tickFormatter={(val) => formatWidgetValue(widget, Number(val) || 0)} />
                           <Tooltip contentStyle={{borderRadius: '8px'}} cursor={widget.interaction?.enableCrosshair ? { stroke: '#94a3b8', strokeWidth: 1 } : undefined} />
                           <DataComp
-                            type="monotone"
+                            type={widget.style?.smoothLines ? 'monotone' : 'linear'}
                             dataKey="value"
                             stroke={primaryColor}
                             fill={primaryColor}
@@ -1052,78 +1027,62 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       </div>
 
       {!isPresentationMode && (
-        <div className="mb-6 bg-white border border-gray-200 rounded-xl shadow-sm p-4">
-          <div className="flex flex-col md:flex-row md:items-center gap-3">
-            <div className="flex items-center gap-2">
+        <div className="mb-6 bg-white border border-gray-200 rounded-xl shadow-sm p-3">
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
               <LayoutGrid className="w-4 h-4 text-blue-600" />
-              <span className="font-semibold text-gray-900">Saved Views & Layout</span>
+              Saved views & layout
             </div>
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
               <select
-                className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                className="px-3 py-2 border border-gray-300 rounded-lg bg-white"
                 onChange={(e) => e.target.value && applySavedView(e.target.value)}
                 defaultValue=""
               >
-                <option value="">เลือก Saved View</option>
+                <option value="">Choose a saved view</option>
                 {savedViews.map(view => (
                   <option key={view.id} value={view.id}>{view.name}</option>
                 ))}
               </select>
               <button
                 onClick={handleSaveViewConfig}
-                className="px-3 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700"
+                className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
               >
-                บันทึกมุมมอง
+                Save view
               </button>
               {savedViews.length > 0 && (
                 <button
                   onClick={() => {
-                    const id = window.prompt('ลบ Saved View ชื่อไหน? (ใส่ชื่อให้ตรง)');
+                    const id = window.prompt('Type the exact saved view name to delete');
                     const target = savedViews.find(v => v.name === id);
                     if (target) deleteSavedView(target.id);
                   }}
-                  className="px-3 py-2 border border-gray-300 text-sm rounded-lg hover:bg-gray-50"
+                  className="px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
                 >
-                  ลบ Saved View
+                  Delete
                 </button>
               )}
-            </div>
-            <div className="flex items-center gap-2 ml-auto">
-              <span className="text-xs text-gray-500">Layout</span>
-              <button
-                onClick={() => setComparisonLayout('balanced')}
-                className={`px-3 py-1.5 border rounded-lg text-sm ${comparisonLayout === 'balanced' ? 'bg-blue-100 border-blue-500 text-blue-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}
-              >
-                สองคอลัมน์
-              </button>
-              <button
-                onClick={() => setComparisonLayout('dense')}
-                className={`px-3 py-1.5 border rounded-lg text-sm ${comparisonLayout === 'dense' ? 'bg-blue-100 border-blue-500 text-blue-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}
-              >
-                เปรียบเทียบหลายกราฟ
-              </button>
+              <div className="flex items-center gap-2 ml-auto">
+                <span className="text-xs text-gray-500">Layout</span>
+                <button
+                  onClick={() => setComparisonLayout('balanced')}
+                  className={`px-3 py-1.5 border rounded-lg text-sm ${comparisonLayout === 'balanced' ? 'bg-blue-100 border-blue-500 text-blue-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                >
+                  Two columns
+                </button>
+                <button
+                  onClick={() => setComparisonLayout('dense')}
+                  className={`px-3 py-1.5 border rounded-lg text-sm ${comparisonLayout === 'dense' ? 'bg-blue-100 border-blue-500 text-blue-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                >
+                  Compact grid
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
 
       {/* AI INSIGHTS (Optional) */}
-      {!isPresentationMode && (
-         <div className="mb-8">
-             <button
-                onClick={handleAnalyze}
-                disabled={isAnalyzing}
-                className="w-full md:w-auto px-6 py-3 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 rounded-lg text-sm font-medium flex items-center justify-center transition-all group shadow-sm"
-             >
-                {isAnalyzing ? (
-                    <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Analyzing...</>
-                ) : (
-                    <><Bot className="w-5 h-5 mr-2 group-hover:scale-110 transition-transform" /> Get AI Executive Summary</>
-                )}
-             </button>
-         </div>
-      )}
-
       {/* Global Filter Bar */}
       {(filters.length > 0 || !isPresentationMode) && (
       <div className={`bg-white border border-gray-200 rounded-xl p-4 mb-8 shadow-sm transition-all ${isPresentationMode ? 'opacity-80 hover:opacity-100' : ''}`}>
@@ -1177,30 +1136,6 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
               )}
           </div>
       </div>
-      )}
-
-      {/* AI Section (Insight Report) */}
-      {(aiAnalysis || isAnalyzing) && (
-         <div className="bg-white border border-blue-100 rounded-xl p-6 mb-8 shadow-sm animate-in fade-in relative">
-             <div className="flex justify-between items-start mb-4">
-                <div className="flex items-center text-blue-700 font-semibold">
-                    <Bot className="w-5 h-5 mr-2" /> AI Executive Summary
-                </div>
-                {aiAnalysis && <button onClick={() => setAiAnalysis(null)} className="text-gray-400 hover:text-gray-600"><Trash2 className="w-4 h-4" /></button>}
-             </div>
-             <div className="prose prose-sm max-w-none text-gray-700">
-                 {isAnalyzing ? (
-                    <div className="space-y-3">
-                        <Skeleton className="h-4 w-full" />
-                        <Skeleton className="h-4 w-5/6" />
-                        <Skeleton className="h-4 w-full" />
-                        <Skeleton className="h-4 w-4/6" />
-                    </div>
-                 ) : (
-                    aiAnalysis
-                 )}
-             </div>
-         </div>
       )}
 
       {/* Dashboard Grid */}

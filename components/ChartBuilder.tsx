@@ -10,7 +10,7 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, Save, ChevronDown, ChevronUp, Palette, Type as TypeIcon, Sliders as SlidersIcon, Sparkles, Copy, Wand2, Layers, MoveHorizontal } from 'lucide-react';
+import { X, Save, ChevronDown, ChevronUp, Palette, Type as TypeIcon, Sliders as SlidersIcon, Sparkles, Copy, Wand2, Layers } from 'lucide-react';
 import {
   ChartType,
   DashboardWidget,
@@ -225,8 +225,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   const [categoryConfig, setCategoryConfig] = useState<Record<string, CategoryConfig>>({});
   const [templateId, setTemplateId] = useState<string>('');
   const [interaction, setInteraction] = useState<InteractionConfig>({ enableBrush: true, enableCrosshair: true, quickRanges: [10] });
-  const [styleConfig, setStyleConfig] = useState<StyleConfig>({ lineWidth: 2, markerSize: 4, barRadius: 4, palette: COLORS });
-  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
+  const [styleConfig, setStyleConfig] = useState<StyleConfig>({ lineWidth: 2, markerSize: 4, barRadius: 4, palette: COLORS, smoothLines: true, background: '#ffffff' });
   const palette = useMemo(() => styleConfig.palette || COLORS, [styleConfig.palette]);
 
   // Style state
@@ -435,7 +434,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
               </div>
               <div className="flex items-center gap-2 text-xs text-gray-500">
                 <Wand2 className="w-4 h-4" />
-                เลือกแม่แบบเพื่อเริ่มต้นเร็วขึ้น
+                Pick a template to start fast
               </div>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -459,42 +458,6 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                 </button>
               ))}
             </div>
-
-            <div className="flex items-center gap-4 bg-gray-50 border border-gray-200 rounded-lg p-3">
-              {[1, 2, 3].map(step => (
-                <div key={step} className="flex items-center gap-2">
-                  <div
-                    className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${wizardStep === step ? 'bg-blue-600 text-white' : 'bg-white border border-gray-300 text-gray-600'}`}
-                  >
-                    {step}
-                  </div>
-                  <div className="text-sm text-gray-700">
-                    {step === 1 && 'เลือก Dimension'}
-                    {step === 2 && 'เลือก Measure'}
-                    {step === 3 && 'ตั้งค่ากราฟ'}
-                  </div>
-                  {step < 3 && <MoveHorizontal className="w-4 h-4 text-gray-300" />}
-                </div>
-              ))}
-              <div className="ml-auto flex items-center gap-2">
-                {wizardStep > 1 && (
-                  <button
-                    onClick={() => setWizardStep((prev) => (prev === 2 ? 1 : 2))}
-                    className="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-700 hover:bg-gray-100"
-                  >
-                    ย้อนกลับ
-                  </button>
-                )}
-                {wizardStep < 3 && (
-                  <button
-                    onClick={() => setWizardStep((prev) => (prev === 1 ? 2 : 3))}
-                    className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700"
-                  >
-                    ขั้นถัดไป
-                  </button>
-                )}
-              </div>
-            </div>
           </div>
         </div>
 
@@ -509,7 +472,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
 
             <div className="flex-1 p-6 overflow-auto">
               {previewData.length > 0 ? (
-                <div className="bg-white rounded-lg shadow-sm p-6 h-full">
+                <div className="bg-white rounded-lg shadow-sm p-6 h-full" style={{ backgroundColor: styleConfig.background }}>
                   {chartTitle && (
                     <div className="text-center mb-2">
                       <h3 className="text-lg font-bold text-gray-900">{chartTitle}</h3>
@@ -562,7 +525,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                         <Tooltip />
                         {legend.enabled && <RechartsLegend />}
                         <Line
-                          type="monotone"
+                          type={styleConfig.smoothLines ? 'monotone' : 'linear'}
                           dataKey="value"
                           stroke={palette[0]}
                           strokeWidth={styleConfig.lineWidth || 2}
@@ -693,12 +656,8 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                     <label className="block text-sm font-medium text-gray-700 mb-2">Dimension (X-Axis)</label>
                     <select
                       value={dimension}
-                      onChange={(e) => {
-                        setDimension(e.target.value);
-                        setWizardStep(1);
-                      }}
+                      onChange={(e) => setDimension(e.target.value)}
                       className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
-                      disabled={wizardStep < 1}
                       style={{ outline: 'none' }}
                     >
                       <option value="">Select...</option>
@@ -713,12 +672,8 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                       <label className="block text-sm font-medium text-gray-700 mb-2">Measure</label>
                       <select
                         value={measure}
-                        onChange={(e) => {
-                          setMeasure(e.target.value as AggregateMethod);
-                          setWizardStep(2);
-                        }}
+                        onChange={(e) => setMeasure(e.target.value as AggregateMethod)}
                         className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
-                        disabled={wizardStep < 2}
                         style={{ outline: 'none' }}
                       >
                         <option value="count">Count</option>
@@ -734,7 +689,6 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                           value={measureCol}
                           onChange={(e) => setMeasureCol(e.target.value)}
                           className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
-                          disabled={wizardStep < 2}
                           style={{ outline: 'none' }}
                         >
                           <option value="">Select...</option>
@@ -754,10 +708,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                       max="50"
                       step="5"
                       value={limit}
-                      onChange={(e) => {
-                        setLimit(parseInt(e.target.value));
-                        setWizardStep(3);
-                      }}
+                      onChange={(e) => setLimit(parseInt(e.target.value))}
                       className="w-full"
                       style={{ outline: 'none' }}
                     />
@@ -818,6 +769,49 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
 
               {activeTab === 'customize' && (
                 <div className="space-y-2">
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 flex flex-wrap gap-3 items-center">
+                    <div className="text-xs font-semibold text-gray-700">Quick Options</div>
+                    <button
+                      onClick={() => setLegend({ ...legend, enabled: !legend.enabled })}
+                      className={`px-2.5 py-1 text-xs rounded border ${legend.enabled ? 'bg-blue-100 border-blue-200 text-blue-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-100'}`}
+                    >
+                      Legend
+                    </button>
+                    <button
+                      onClick={() => setDataLabels({ ...dataLabels, enabled: !dataLabels.enabled })}
+                      className={`px-2.5 py-1 text-xs rounded border ${dataLabels.enabled ? 'bg-blue-100 border-blue-200 text-blue-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-100'}`}
+                    >
+                      Data labels
+                    </button>
+                    <button
+                      onClick={() => setXAxis({ ...xAxis, showGridlines: !xAxis.showGridlines })}
+                      className={`px-2.5 py-1 text-xs rounded border ${xAxis.showGridlines ? 'bg-blue-100 border-blue-200 text-blue-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-100'}`}
+                    >
+                      X gridlines
+                    </button>
+                    <button
+                      onClick={() => setLeftYAxis({ ...leftYAxis, showGridlines: !leftYAxis.showGridlines })}
+                      className={`px-2.5 py-1 text-xs rounded border ${leftYAxis.showGridlines ? 'bg-blue-100 border-blue-200 text-blue-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-100'}`}
+                    >
+                      Y gridlines
+                    </button>
+                    <button
+                      onClick={() => setStyleConfig({ ...styleConfig, smoothLines: !styleConfig.smoothLines })}
+                      className={`px-2.5 py-1 text-xs rounded border ${styleConfig.smoothLines ? 'bg-blue-100 border-blue-200 text-blue-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-100'}`}
+                    >
+                      Smooth lines
+                    </button>
+                    <div className="flex items-center gap-2 text-xs text-gray-600 ml-auto">
+                      <span>Background</span>
+                      <input
+                        type="color"
+                        value={styleConfig.background || '#ffffff'}
+                        onChange={(e) => setStyleConfig({ ...styleConfig, background: e.target.value })}
+                        className="w-10 h-8 border border-gray-300 rounded"
+                        style={{ outline: 'none' }}
+                      />
+                    </div>
+                  </div>
                   <Section
                     title="Styling"
                     icon={<Palette className="w-4 h-4 text-blue-600" />}
@@ -1126,7 +1120,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                           onChange={(e) => setInteraction({ ...interaction, enableBrush: e.target.checked })}
                           className="mr-2"
                         />
-                        เปิด Brush/Zoom
+                        Enable brush / zoom
                       </label>
                       <label className="flex items-center text-sm">
                         <input
@@ -1135,17 +1129,17 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                           onChange={(e) => setInteraction({ ...interaction, enableCrosshair: e.target.checked })}
                           className="mr-2"
                         />
-                        แสดง Crosshair/Tooltip ชัดขึ้น
+                        Show crosshair + tooltip
                       </label>
                       <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">Quick ranges (จำนวนจุดข้อมูล)</label>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Quick ranges (data points)</label>
                         <input
                           type="text"
                           value={(interaction.quickRanges || []).join(', ')}
                           onChange={(e) => setInteraction({ ...interaction, quickRanges: e.target.value.split(',').map(v => parseInt(v.trim())).filter(n => !isNaN(n)) })}
                           className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
                         />
-                        <p className="text-xs text-gray-500 mt-1">ตั้งค่าช่วงเลือกเร็ว เช่น 7, 14, 30 จุด</p>
+                        <p className="text-xs text-gray-500 mt-1">Example: 7, 14, 30 for quick zoom presets</p>
                       </div>
                     </div>
                   </Section>
