@@ -14,6 +14,14 @@ import ChartBuilder from '../components/ChartBuilder';
 import EmptyState from '../components/EmptyState';
 import Skeleton from '../components/Skeleton';
 
+interface SavedView {
+  id: string;
+  name: string;
+  widgets: DashboardWidget[];
+  filters: DashboardFilter[];
+  createdAt: number;
+}
+
 interface AnalyticsProps {
   project: Project;
   onUpdateProject?: (p: Project) => void;
@@ -64,6 +72,9 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
   const [interactionMode, setInteractionMode] = useState<'drill' | 'filter'>('filter');
   const [isExporting, setIsExporting] = useState(false);
   const [newFilterCol, setNewFilterCol] = useState('');
+  const [savedViews, setSavedViews] = useState<SavedView[]>([]);
+  const [comparisonLayout, setComparisonLayout] = useState<'balanced' | 'dense'>('balanced');
+  const [widgetRanges, setWidgetRanges] = useState<Record<string, { start: number; end: number }>>({});
   
   // Phase 4: Drill Down
   const [drillDown, setDrillDown] = useState<DrillDownState | null>(null);
@@ -76,6 +87,17 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
           setWidgets(project.dashboard);
       }
   }, [project.dashboard]);
+
+  useEffect(() => {
+    const stored = localStorage.getItem('analytics-saved-views');
+    if (stored) {
+      try {
+        setSavedViews(JSON.parse(stored));
+      } catch (e) {
+        setSavedViews([]);
+      }
+    }
+  }, []);
 
   // 1. Prepare Base Data (Raw or Structured)
   const baseData = useMemo(() => {
@@ -142,6 +164,56 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
   const getUniqueValues = (col: string) => {
       const unique = new Set(baseData.map(row => String(row[col] || '')));
       return Array.from(unique).filter(Boolean).sort().slice(0, 100); // Limit dropdown size
+  };
+
+  const persistSavedViews = (views: SavedView[]) => {
+    setSavedViews(views);
+    localStorage.setItem('analytics-saved-views', JSON.stringify(views));
+  };
+
+  const handleSaveViewConfig = () => {
+    const name = window.prompt('ตั้งชื่อ Saved View');
+    if (!name) return;
+    const newView: SavedView = {
+      id: crypto.randomUUID(),
+      name,
+      widgets,
+      filters,
+      createdAt: Date.now(),
+    };
+    persistSavedViews([...savedViews, newView]);
+  };
+
+  const applySavedView = (id: string) => {
+    const view = savedViews.find(v => v.id === id);
+    if (!view) return;
+    setWidgets(view.widgets);
+    setFilters(view.filters || []);
+  };
+
+  const deleteSavedView = (id: string) => {
+    const next = savedViews.filter(v => v.id !== id);
+    persistSavedViews(next);
+  };
+
+  const updateRange = (widgetId: string, start: number, end: number) => {
+    setWidgetRanges(prev => ({ ...prev, [widgetId]: { start, end } }));
+  };
+
+  const clearRange = (widgetId: string) => {
+    setWidgetRanges(prev => {
+      const next = { ...prev };
+      delete next[widgetId];
+      return next;
+    });
+  };
+
+  const applyRangeToData = <T,>(widgetId: string, data: T[]) => {
+    const range = widgetRanges[widgetId];
+    if (!range || data.length === 0) return data;
+    const end = Math.min(range.end, data.length - 1);
+    const start = Math.max(0, Math.min(range.start, end));
+    return data.slice(start, end + 1);
   };
 
   // --- Dashboard Logic ---
@@ -474,7 +546,8 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
         // NEW: Multi-Series Chart Rendering (Google Sheets Style)
       if (widget.series && widget.series.length > 0 && widget.type !== 'pie' && widget.type !== 'kpi' && widget.type !== 'wordcloud' && widget.type !== 'table') {
-        const data = processMultiSeriesData(widget);
+        const rawData = processMultiSeriesData(widget);
+        const data = applyRangeToData(widget.id, rawData);
         if (!data || data.length === 0) return <div className="flex items-center justify-center h-full text-gray-400 text-sm">No Data</div>;
 
         const hasRightAxis = widget.series.some(s => s.yAxis === 'right');
@@ -483,6 +556,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
         const leftYAxisConfig = widget.leftYAxis || { fontSize: 11, fontColor: '#666666', min: 'auto', max: 'auto', format: '#,##0', showGridlines: true };
         const rightYAxisConfig = widget.rightYAxis || { fontSize: 11, fontColor: '#666666', min: 'auto', max: 'auto', format: '#,##0', showGridlines: false };
         const dataLabelsConfig = widget.dataLabels || { enabled: false, position: 'top', fontSize: 11, fontWeight: 'normal', color: '#000000' };
+        const quickRanges = widget.interaction?.quickRanges || [];
 
         return (
           <div className="h-full flex flex-col">
@@ -491,6 +565,27 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
               <div className="text-center mb-2">
                 <h3 className="text-base font-bold text-gray-900">{widget.chartTitle}</h3>
                 {widget.subtitle && <p className="text-xs text-gray-600">{widget.subtitle}</p>}
+              </div>
+            )}
+
+            {quickRanges.length > 0 && (
+              <div className="flex items-center gap-2 mb-2 text-xs text-gray-600 flex-wrap">
+                <span>ช่วงเร็ว:</span>
+                {quickRanges.map(rangeVal => (
+                  <button
+                    key={rangeVal}
+                    onClick={() => updateRange(widget.id, Math.max(0, rawData.length - rangeVal), rawData.length - 1)}
+                    className="px-2 py-1 border border-gray-300 rounded hover:bg-gray-50"
+                  >
+                    ล่าสุด {rangeVal}
+                  </button>
+                ))}
+                <button
+                  onClick={() => clearRange(widget.id)}
+                  className="px-2 py-1 border border-gray-200 rounded text-gray-600 hover:bg-gray-50"
+                >
+                  ทั้งหมด
+                </button>
               </div>
             )}
 
@@ -529,7 +624,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                     ]}
                   />
                 )}
-                <Tooltip />
+                <Tooltip cursor={widget.interaction?.enableCrosshair ? { stroke: '#94a3b8', strokeWidth: 1 } : undefined} />
                 {legendConfig.enabled && (
                   <RechartsLegend
                     wrapperStyle={{ fontSize: legendConfig.fontSize }}
@@ -550,7 +645,8 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                       fill={s.color}
                       stroke={s.color}
                       fillOpacity={s.type === 'area' ? 0.3 : 1}
-                      strokeWidth={s.type === 'line' ? 2 : 0}
+                        strokeWidth={s.type === 'line' ? (widget.style?.lineWidth || 2) : 0}
+                        radius={widget.style?.barRadius ? [widget.style.barRadius, widget.style.barRadius, 0, 0] : undefined}
                       onClick={(barData: any) => handleChartClick(null, widget, barData[widget.dimension])}
                       className="cursor-pointer"
                     >
@@ -568,6 +664,19 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                     </Component>
                   );
                 })}
+                {widget.interaction?.enableBrush && (
+                  <Brush
+                    dataKey={widget.dimension}
+                    height={24}
+                    travellerWidth={10}
+                    stroke="#cbd5e1"
+                    onChange={(range) => {
+                      if (range?.startIndex !== undefined && range?.endIndex !== undefined) {
+                        updateRange(widget.id, range.startIndex, range.endIndex);
+                      }
+                    }}
+                  />
+                )}
               </ComposedChart>
             </ResponsiveContainer>
           </div>
@@ -687,37 +796,74 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
           case 'line':
           case 'area':
                const sortedData = [...(data as any[])].sort((a,b) => a.name.localeCompare(b.name));
-               const ChartComp = widget.type === 'line' ? LineChart : AreaChart;
-               const DataComp = widget.type === 'line' ? Line : Area;
-               const primaryColor = widget.color || palette[0] || '#3B82F6';
-               return (
-                  <ResponsiveContainer width="100%" height="100%">
-                      <ChartComp
-                        data={sortedData}
+               const rangedData = applyRangeToData(widget.id, sortedData);
+               const quickRanges = widget.interaction?.quickRanges || [];
+                const ChartComp = widget.type === 'line' ? LineChart : AreaChart;
+                const DataComp = widget.type === 'line' ? Line : Area;
+                const primaryColor = widget.color || palette[0] || '#3B82F6';
+                return (
+                  <div className="h-full flex flex-col">
+                    {quickRanges.length > 0 && (
+                      <div className="flex items-center gap-2 mb-2 text-xs text-gray-600 flex-wrap">
+                        <span>ช่วงเร็ว:</span>
+                        {quickRanges.map(rangeVal => (
+                          <button
+                            key={rangeVal}
+                            onClick={() => updateRange(widget.id, Math.max(0, sortedData.length - rangeVal), sortedData.length - 1)}
+                            className="px-2 py-1 border border-gray-300 rounded hover:bg-gray-50"
+                          >
+                            ล่าสุด {rangeVal}
+                          </button>
+                        ))}
+                        <button
+                          onClick={() => clearRange(widget.id)}
+                          className="px-2 py-1 border border-gray-200 rounded text-gray-600 hover:bg-gray-50"
+                        >
+                          ทั้งหมด
+                        </button>
+                      </div>
+                    )}
+                    <ResponsiveContainer width="100%" height="100%">
+                        <ChartComp
+                        data={rangedData}
                         margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
                         onClick={(e) => e && e.activeLabel && handleChartClick(null, widget, e.activeLabel)}
                       >
                           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
                           <XAxis dataKey="name" tick={{fontSize: 11}} />
                           <YAxis tick={{fontSize: 11}} tickFormatter={(val) => formatWidgetValue(widget, Number(val) || 0)} />
-                          <Tooltip contentStyle={{borderRadius: '8px'}} />
+                          <Tooltip contentStyle={{borderRadius: '8px'}} cursor={widget.interaction?.enableCrosshair ? { stroke: '#94a3b8', strokeWidth: 1 } : undefined} />
                           <DataComp
                             type="monotone"
                             dataKey="value"
                             stroke={primaryColor}
                             fill={primaryColor}
                             fillOpacity={0.2}
-                            strokeWidth={2}
-                            dot={{r: 4}}
-                            activeDot={{r: 6}}
+                            strokeWidth={widget.style?.lineWidth || 2}
+                            dot={{r: widget.style?.markerSize || 4}}
+                            activeDot={{r: (widget.style?.markerSize || 4) + 2}}
                             className="cursor-pointer"
                           >
                               {showValues && <LabelList dataKey="value" position="top" formatter={(val: number) => formatWidgetValue(widget, Number(val) || 0)} />}
                           </DataComp>
+                          {widget.interaction?.enableBrush && (
+                            <Brush
+                              dataKey="name"
+                              height={22}
+                              travellerWidth={10}
+                              stroke="#cbd5e1"
+                              onChange={(range) => {
+                                if (range?.startIndex !== undefined && range?.endIndex !== undefined) {
+                                  updateRange(widget.id, range.startIndex, range.endIndex);
+                                }
+                              }}
+                            />
+                          )}
                           {showLegend && <Legend iconType="circle" wrapperStyle={{fontSize: '12px'}} />}
                       </ChartComp>
-                  </ResponsiveContainer>
-               );
+                   </ResponsiveContainer>
+                  </div>
+                );
            case 'kpi':
                const total = (data as any[]).reduce((acc, curr) => acc + curr.value, 0);
                const formattedTotal = formatWidgetValue(widget, total);
@@ -827,7 +973,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
   if (baseData.length === 0) {
       return (
         <div className="p-12">
-            <EmptyState 
+            <EmptyState
                 icon={Table}
                 title="Data is not ready"
                 description="Please go to Data Prep and structure your data before creating analytics."
@@ -835,6 +981,8 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
         </div>
       );
   }
+
+  const gridColumns = comparisonLayout === 'dense' ? 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3' : 'grid-cols-1 lg:grid-cols-2';
 
   return (
     <div className="p-8 bg-[#F8F9FA] min-h-full overflow-y-auto flex flex-col">
@@ -902,6 +1050,62 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
             </button>
         </div>
       </div>
+
+      {!isPresentationMode && (
+        <div className="mb-6 bg-white border border-gray-200 rounded-xl shadow-sm p-4">
+          <div className="flex flex-col md:flex-row md:items-center gap-3">
+            <div className="flex items-center gap-2">
+              <LayoutGrid className="w-4 h-4 text-blue-600" />
+              <span className="font-semibold text-gray-900">Saved Views & Layout</span>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <select
+                className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                onChange={(e) => e.target.value && applySavedView(e.target.value)}
+                defaultValue=""
+              >
+                <option value="">เลือก Saved View</option>
+                {savedViews.map(view => (
+                  <option key={view.id} value={view.id}>{view.name}</option>
+                ))}
+              </select>
+              <button
+                onClick={handleSaveViewConfig}
+                className="px-3 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700"
+              >
+                บันทึกมุมมอง
+              </button>
+              {savedViews.length > 0 && (
+                <button
+                  onClick={() => {
+                    const id = window.prompt('ลบ Saved View ชื่อไหน? (ใส่ชื่อให้ตรง)');
+                    const target = savedViews.find(v => v.name === id);
+                    if (target) deleteSavedView(target.id);
+                  }}
+                  className="px-3 py-2 border border-gray-300 text-sm rounded-lg hover:bg-gray-50"
+                >
+                  ลบ Saved View
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-2 ml-auto">
+              <span className="text-xs text-gray-500">Layout</span>
+              <button
+                onClick={() => setComparisonLayout('balanced')}
+                className={`px-3 py-1.5 border rounded-lg text-sm ${comparisonLayout === 'balanced' ? 'bg-blue-100 border-blue-500 text-blue-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+              >
+                สองคอลัมน์
+              </button>
+              <button
+                onClick={() => setComparisonLayout('dense')}
+                className={`px-3 py-1.5 border rounded-lg text-sm ${comparisonLayout === 'dense' ? 'bg-blue-100 border-blue-500 text-blue-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+              >
+                เปรียบเทียบหลายกราฟ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* AI INSIGHTS (Optional) */}
       {!isPresentationMode && (
@@ -1000,7 +1204,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       )}
 
       {/* Dashboard Grid */}
-      <div ref={dashboardRef} className="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-10">
+      <div ref={dashboardRef} className={`grid ${gridColumns} gap-6 pb-10`}>
           {widgets.map((widget) => (
               <div 
                 key={widget.id} 

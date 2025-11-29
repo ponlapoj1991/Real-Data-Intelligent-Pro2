@@ -148,6 +148,20 @@ export interface CategoryConfig {
   hidden?: boolean; // Hide this category
 }
 
+export interface InteractionConfig {
+  enableBrush?: boolean;
+  enableZoom?: boolean;
+  enableCrosshair?: boolean;
+  quickRanges?: number[];
+}
+
+export interface StyleConfig {
+  palette?: string[];
+  lineWidth?: number;
+  markerSize?: number;
+  barRadius?: number;
+}
+
 export interface DashboardWidget {
   id: string;
   title: string;
@@ -187,6 +201,16 @@ export interface DashboardWidget {
 
   // Per-Category Configuration (NEW)
   categoryConfig?: Record<string, CategoryConfig>;  // { 'Facebook': { color: '#1877F2' } }
+
+  // Styling bundle
+  style?: StyleConfig;
+  palette?: string[];
+
+  // Interactions
+  interaction?: InteractionConfig;
+
+  // Template reference
+  templateId?: string;
 
   // Legacy Visual Options (for backward compatibility)
   showValues?: boolean;

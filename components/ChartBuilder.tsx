@@ -10,7 +10,7 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, Save, ChevronDown, ChevronUp, Palette, Type as TypeIcon, Sliders as SlidersIcon } from 'lucide-react';
+import { X, Save, ChevronDown, ChevronUp, Palette, Type as TypeIcon, Sliders as SlidersIcon, Sparkles, Copy, Wand2, Layers, MoveHorizontal } from 'lucide-react';
 import {
   ChartType,
   DashboardWidget,
@@ -19,7 +19,9 @@ import {
   DataLabelConfig,
   AxisConfig,
   LegendConfig,
-  CategoryConfig
+  CategoryConfig,
+  InteractionConfig,
+  StyleConfig
 } from '../types';
 import {
   ResponsiveContainer,
@@ -51,6 +53,56 @@ interface ChartBuilderProps {
 const generateId = () => 'w-' + Date.now().toString(36) + Math.random().toString(36).substring(2, 9);
 
 const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#6366F1'];
+
+const chartTemplates = [
+  {
+    id: 'comparison-bars',
+    label: 'Bar Comparison',
+    type: 'bar' as ChartType,
+    description: 'Stacked bars with sentiment palette',
+    config: {
+      barMode: 'stacked' as const,
+      palette: ['#2563EB', '#10B981', '#F59E0B', '#EF4444'],
+      showLegend: true,
+      limit: 8,
+    }
+  },
+  {
+    id: 'trend-line',
+    label: 'Trend Line',
+    type: 'line' as ChartType,
+    description: 'Smooth line with markers and labels',
+    config: {
+      showValues: true,
+      style: { lineWidth: 3, markerSize: 6 },
+      legend: { enabled: true, position: 'top', fontSize: 12, fontColor: '#1F2937', alignment: 'right' } as LegendConfig,
+      interaction: { enableBrush: true, enableCrosshair: true, quickRanges: [7, 14, 30] } as InteractionConfig,
+    }
+  },
+  {
+    id: 'share-pie',
+    label: 'Distribution Pie',
+    type: 'pie' as ChartType,
+    description: 'Pie with smart labels and legend',
+    config: {
+      showLegend: true,
+      valueFormat: 'percent' as const,
+      palette: ['#1D4ED8', '#22C55E', '#F97316', '#0EA5E9', '#EC4899'],
+      limit: 6,
+    }
+  },
+  {
+    id: 'combo-compare',
+    label: 'Combo Compare',
+    type: 'combo' as ChartType,
+    description: 'Bars + line for target vs actual',
+    config: {
+      legend: { enabled: true, position: 'bottom', fontSize: 11, fontColor: '#111827', alignment: 'center' } as LegendConfig,
+      style: { lineWidth: 2, markerSize: 5, barRadius: 6 },
+      interaction: { enableBrush: true, quickRanges: [10, 20] } as InteractionConfig,
+    }
+  }
+];
 
 // Collapsible Section
 const Section: React.FC<{
@@ -171,6 +223,11 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   const [limit, setLimit] = useState<number>(10);
   const [width, setWidth] = useState<'half' | 'full'>('half');
   const [categoryConfig, setCategoryConfig] = useState<Record<string, CategoryConfig>>({});
+  const [templateId, setTemplateId] = useState<string>('');
+  const [interaction, setInteraction] = useState<InteractionConfig>({ enableBrush: true, enableCrosshair: true, quickRanges: [10] });
+  const [styleConfig, setStyleConfig] = useState<StyleConfig>({ lineWidth: 2, markerSize: 4, barRadius: 4, palette: COLORS });
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
+  const palette = useMemo(() => styleConfig.palette || COLORS, [styleConfig.palette]);
 
   // Style state
   const [chartTitle, setChartTitle] = useState('');
@@ -223,6 +280,9 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       setLimit(initialWidget.limit || 10);
       setWidth(initialWidget.width);
       setCategoryConfig(initialWidget.categoryConfig || {});
+      setTemplateId(initialWidget.templateId || '');
+      setInteraction(initialWidget.interaction || { enableBrush: true, enableCrosshair: true, quickRanges: [10] });
+      setStyleConfig(initialWidget.style || { lineWidth: 2, markerSize: 4, barRadius: 4, palette: COLORS });
       setChartTitle(initialWidget.chartTitle || initialWidget.title);
       setSubtitle(initialWidget.subtitle || '');
       if (initialWidget.legend) setLegend(initialWidget.legend);
@@ -273,7 +333,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       });
     }
 
-    const result = Object.keys(groups)
+  const result = Object.keys(groups)
       .filter(k => !k.includes('_'))
       .map(k => ({
         name: k,
@@ -282,8 +342,27 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       .sort((a, b) => b.value - a.value)
       .slice(0, limit);
 
-    return result;
-  }, [dimension, measure, measureCol, data, limit]);
+  return result;
+}, [dimension, measure, measureCol, data, limit]);
+
+  const applyTemplate = (templateIdToApply: string) => {
+    const template = chartTemplates.find(t => t.id === templateIdToApply);
+    if (!template) return;
+
+    setTemplateId(template.id);
+    setType(template.type);
+    if (template.config.limit) setLimit(template.config.limit);
+    if ((template.config as any).palette) {
+      const palette = (template.config as any).palette as string[];
+      setStyleConfig(prev => ({ ...prev, palette }));
+    }
+    if ((template.config as any).legend) setLegend((template.config as any).legend as LegendConfig);
+    if ((template.config as any).style) setStyleConfig(prev => ({ ...prev, ...(template.config as any).style }));
+    if ((template.config as any).interaction) setInteraction((template.config as any).interaction as InteractionConfig);
+    if ((template.config as any).barMode) setBarMode((template.config as any).barMode);
+    if ((template.config as any).valueFormat) setValueFormat((template.config as any).valueFormat);
+    if ((template.config as any).showLegend !== undefined) setShowLegend((template.config as any).showLegend);
+  };
 
   const toggleSection = (section: string) => {
     const newSections = new Set(openSections);
@@ -305,6 +384,10 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       measureCol: measureCol || undefined,
       limit,
       width,
+      templateId,
+      interaction,
+      style: styleConfig,
+      palette: styleConfig.palette,
       chartTitle,
       subtitle,
       legend,
@@ -342,6 +425,79 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
           </button>
         </div>
 
+        {/* Templates & Wizard */}
+        <div className="px-6 pt-4 pb-2 border-b border-gray-200 bg-white">
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-blue-600" />
+                <span className="font-semibold text-gray-900">Chart Templates</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-gray-500">
+                <Wand2 className="w-4 h-4" />
+                เลือกแม่แบบเพื่อเริ่มต้นเร็วขึ้น
+              </div>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {chartTemplates.map(template => (
+                <button
+                  key={template.id}
+                  onClick={() => applyTemplate(template.id)}
+                  className={`border rounded-lg p-3 text-left hover:border-blue-500 hover:shadow-sm transition bg-gray-50 ${templateId === template.id ? 'border-blue-500 shadow' : 'border-gray-200'}`}
+                  style={{ outline: 'none' }}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-sm font-semibold text-gray-900">{template.label}</div>
+                    <Layers className="w-4 h-4 text-gray-400" />
+                  </div>
+                  <p className="text-xs text-gray-500 leading-snug">{template.description}</p>
+                  <div className="mt-3 flex items-center gap-1 flex-wrap">
+                    {(template.config as any).palette?.slice(0, 4)?.map((c: string) => (
+                      <span key={c} className="w-4 h-4 rounded-full border border-white shadow" style={{ backgroundColor: c }} />
+                    ))}
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-4 bg-gray-50 border border-gray-200 rounded-lg p-3">
+              {[1, 2, 3].map(step => (
+                <div key={step} className="flex items-center gap-2">
+                  <div
+                    className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${wizardStep === step ? 'bg-blue-600 text-white' : 'bg-white border border-gray-300 text-gray-600'}`}
+                  >
+                    {step}
+                  </div>
+                  <div className="text-sm text-gray-700">
+                    {step === 1 && 'เลือก Dimension'}
+                    {step === 2 && 'เลือก Measure'}
+                    {step === 3 && 'ตั้งค่ากราฟ'}
+                  </div>
+                  {step < 3 && <MoveHorizontal className="w-4 h-4 text-gray-300" />}
+                </div>
+              ))}
+              <div className="ml-auto flex items-center gap-2">
+                {wizardStep > 1 && (
+                  <button
+                    onClick={() => setWizardStep((prev) => (prev === 2 ? 1 : 2))}
+                    className="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-700 hover:bg-gray-100"
+                  >
+                    ย้อนกลับ
+                  </button>
+                )}
+                {wizardStep < 3 && (
+                  <button
+                    onClick={() => setWizardStep((prev) => (prev === 1 ? 2 : 3))}
+                    className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700"
+                  >
+                    ขั้นถัดไป
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* 2-Column Layout */}
         <div className="flex-1 grid grid-cols-2 gap-6 p-6 overflow-hidden">
           {/* LEFT: Preview */}
@@ -377,7 +533,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                           {previewData.map((entry, index) => (
                             <Cell
                               key={`cell-${index}`}
-                              fill={categoryConfig[entry.name]?.color || COLORS[index % COLORS.length]}
+                              fill={categoryConfig[entry.name]?.color || palette[index % palette.length]}
                             />
                           ))}
                         </Pie>
@@ -408,9 +564,9 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                         <Line
                           type="monotone"
                           dataKey="value"
-                          stroke={COLORS[0]}
-                          strokeWidth={2}
-                          dot={{ r: 4 }}
+                          stroke={palette[0]}
+                          strokeWidth={styleConfig.lineWidth || 2}
+                          dot={{ r: styleConfig.markerSize || 4 }}
                           style={{ outline: 'none' }}
                         >
                           {dataLabels.enabled && (
@@ -450,12 +606,13 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                         <Bar
                           dataKey="value"
                           onDoubleClick={(data: any) => handleBarDoubleClick(data.name)}
+                          radius={styleConfig.barRadius ? [styleConfig.barRadius, styleConfig.barRadius, 0, 0] : undefined}
                           style={{ cursor: 'pointer', outline: 'none' }}
                         >
                           {previewData.map((entry, idx) => (
                             <Cell
                               key={`cell-${idx}`}
-                              fill={categoryConfig[entry.name]?.color || COLORS[idx % COLORS.length]}
+                              fill={categoryConfig[entry.name]?.color || palette[idx % palette.length]}
                             />
                           ))}
                           {dataLabels.enabled && (
@@ -536,8 +693,12 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                     <label className="block text-sm font-medium text-gray-700 mb-2">Dimension (X-Axis)</label>
                     <select
                       value={dimension}
-                      onChange={(e) => setDimension(e.target.value)}
+                      onChange={(e) => {
+                        setDimension(e.target.value);
+                        setWizardStep(1);
+                      }}
                       className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                      disabled={wizardStep < 1}
                       style={{ outline: 'none' }}
                     >
                       <option value="">Select...</option>
@@ -552,8 +713,12 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                       <label className="block text-sm font-medium text-gray-700 mb-2">Measure</label>
                       <select
                         value={measure}
-                        onChange={(e) => setMeasure(e.target.value as AggregateMethod)}
+                        onChange={(e) => {
+                          setMeasure(e.target.value as AggregateMethod);
+                          setWizardStep(2);
+                        }}
                         className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                        disabled={wizardStep < 2}
                         style={{ outline: 'none' }}
                       >
                         <option value="count">Count</option>
@@ -569,6 +734,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                           value={measureCol}
                           onChange={(e) => setMeasureCol(e.target.value)}
                           className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                          disabled={wizardStep < 2}
                           style={{ outline: 'none' }}
                         >
                           <option value="">Select...</option>
@@ -588,7 +754,10 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                       max="50"
                       step="5"
                       value={limit}
-                      onChange={(e) => setLimit(parseInt(e.target.value))}
+                      onChange={(e) => {
+                        setLimit(parseInt(e.target.value));
+                        setWizardStep(3);
+                      }}
                       className="w-full"
                       style={{ outline: 'none' }}
                     />
@@ -649,6 +818,62 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
 
               {activeTab === 'customize' && (
                 <div className="space-y-2">
+                  <Section
+                    title="Styling"
+                    icon={<Palette className="w-4 h-4 text-blue-600" />}
+                    isOpen={openSections.has('styling')}
+                    onToggle={() => toggleSection('styling')}
+                  >
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Line Width: {styleConfig.lineWidth}px</label>
+                        <input
+                          type="range"
+                          min={1}
+                          max={6}
+                          value={styleConfig.lineWidth}
+                          onChange={(e) => setStyleConfig({ ...styleConfig, lineWidth: parseInt(e.target.value) })}
+                          className="w-full"
+                          style={{ outline: 'none' }}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Marker Size: {styleConfig.markerSize}px</label>
+                        <input
+                          type="range"
+                          min={2}
+                          max={10}
+                          value={styleConfig.markerSize}
+                          onChange={(e) => setStyleConfig({ ...styleConfig, markerSize: parseInt(e.target.value) })}
+                          className="w-full"
+                          style={{ outline: 'none' }}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Bar Corner Radius: {styleConfig.barRadius}px</label>
+                        <input
+                          type="range"
+                          min={0}
+                          max={12}
+                          value={styleConfig.barRadius}
+                          onChange={(e) => setStyleConfig({ ...styleConfig, barRadius: parseInt(e.target.value) })}
+                          className="w-full"
+                          style={{ outline: 'none' }}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Custom Palette (comma-separated)</label>
+                        <input
+                          type="text"
+                          value={(styleConfig.palette || COLORS).join(', ')}
+                          onChange={(e) => setStyleConfig({ ...styleConfig, palette: e.target.value.split(',').map(c => c.trim()).filter(Boolean) })}
+                          className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                          style={{ outline: 'none' }}
+                        />
+                      </div>
+                    </div>
+                  </Section>
+
                   <Section
                     title="Titles"
                     icon={<TypeIcon className="w-4 h-4 text-blue-600" />}
@@ -886,6 +1111,44 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                       </div>
                     </Section>
                   )}
+
+                  <Section
+                    title="Interaction"
+                    icon={<SlidersIcon className="w-4 h-4 text-amber-600" />}
+                    isOpen={openSections.has('interaction')}
+                    onToggle={() => toggleSection('interaction')}
+                  >
+                    <div className="space-y-3">
+                      <label className="flex items-center text-sm">
+                        <input
+                          type="checkbox"
+                          checked={interaction.enableBrush}
+                          onChange={(e) => setInteraction({ ...interaction, enableBrush: e.target.checked })}
+                          className="mr-2"
+                        />
+                        เปิด Brush/Zoom
+                      </label>
+                      <label className="flex items-center text-sm">
+                        <input
+                          type="checkbox"
+                          checked={interaction.enableCrosshair}
+                          onChange={(e) => setInteraction({ ...interaction, enableCrosshair: e.target.checked })}
+                          className="mr-2"
+                        />
+                        แสดง Crosshair/Tooltip ชัดขึ้น
+                      </label>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Quick ranges (จำนวนจุดข้อมูล)</label>
+                        <input
+                          type="text"
+                          value={(interaction.quickRanges || []).join(', ')}
+                          onChange={(e) => setInteraction({ ...interaction, quickRanges: e.target.value.split(',').map(v => parseInt(v.trim())).filter(n => !isNaN(n)) })}
+                          className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">ตั้งค่าช่วงเลือกเร็ว เช่น 7, 14, 30 จุด</p>
+                      </div>
+                    </div>
+                  </Section>
                 </div>
               )}
             </div>
