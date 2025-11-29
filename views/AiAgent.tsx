@@ -8,7 +8,7 @@ import {
     Database, UploadCloud, Filter, Trash2, Settings, Edit3, Command,
     MousePointer2
 } from 'lucide-react';
-import { saveProject } from '../utils/storage';
+import { saveProject } from '../utils/storage-compat';
 import { exportToExcel, parseExcelFile, inferColumns } from '../utils/excel';
 import { processAiAgentAction, askAiAgent } from '../utils/ai';
 import TableColumnFilter from '../components/TableColumnFilter';

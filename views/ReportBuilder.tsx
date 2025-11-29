@@ -10,7 +10,7 @@ import {
     Undo2, Redo2, Square, Circle, Triangle, ArrowRight, Minus, Star, Highlighter, Copy, Move, RotateCw, Image as ImageIcon,
     FileText, Settings, Presentation, PanelRightClose, PanelRightOpen, FileInput
 } from 'lucide-react';
-import { saveProject } from '../utils/storage';
+import { saveProject } from '../utils/storage-compat';
 import { generateCustomReport } from '../utils/report';
 import { applyTransformation } from '../utils/transform';
 import { ResponsiveContainer, BarChart, Bar, PieChart as RePieChart, Pie, Cell, LineChart as ReLineChart, Line, AreaChart as ReAreaChart, Area, CartesianGrid, XAxis, YAxis } from 'recharts';

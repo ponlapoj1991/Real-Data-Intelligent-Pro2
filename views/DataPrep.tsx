@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Settings, Download, Save, Search, X, Eraser, Trash2, Replace, ArrowRight, Zap, Calendar, Split, Table2, Database, Plus, GripVertical, Check, ListFilter, ChevronUp, ChevronDown, Pencil } from 'lucide-react';
 import { Project, RawRow, ColumnConfig, TransformationRule, TransformMethod } from '../types';
-import { saveProject } from '../utils/storage';
+import { saveProject } from '../utils/storage-compat';
 import { exportToExcel, smartParseDate } from '../utils/excel';
 import { analyzeSourceColumn, applyTransformation, getAllUniqueValues } from '../utils/transform';
 import EmptyState from '../components/EmptyState';

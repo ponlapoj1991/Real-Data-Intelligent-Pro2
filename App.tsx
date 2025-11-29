@@ -9,7 +9,7 @@ import ReportBuilder from './views/ReportBuilder';
 import AiAgent from './views/AiAgent';
 import Settings from './views/Settings';
 import { Project, AppView, ProjectTab } from './types';
-import { saveLastState } from './utils/storage';
+import { saveLastState } from './utils/storage-compat';
 import { ToastProvider } from './components/ToastProvider';
 
 const App: React.FC = () => {

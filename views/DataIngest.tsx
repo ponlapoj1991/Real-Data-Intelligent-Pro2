@@ -3,8 +3,9 @@ import React, { useCallback, useState } from 'react';
 import { UploadCloud, FileSpreadsheet, CheckCircle2, Link as LinkIcon, DownloadCloud } from 'lucide-react';
 import { parseExcelFile, parseCsvUrl, inferColumns } from '../utils/excel';
 import { Project, RawRow } from '../types';
-import { saveProject } from '../utils/storage';
+import { saveProject, appendProjectData } from '../utils/storage-compat';
 import { useToast } from '../components/ToastProvider';
+import { useExcelWorker } from '../hooks/useExcelWorker';
 
 interface DataIngestProps {
   project: Project;
@@ -16,7 +17,10 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, onNex
   const [isDragging, setIsDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const { showToast } = useToast();
-  
+
+  // Web Worker for Excel parsing
+  const { parseFile, isProcessing, progress, error: workerError } = useExcelWorker();
+
   // New state for URL import
   const [importMode, setImportMode] = useState<'file' | 'url'>('file');
   const [sheetUrl, setSheetUrl] = useState('');
@@ -56,19 +60,31 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, onNex
 
   const handleFileUpload = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    
-    setIsLoading(true);
+
     const file = files[0];
 
+    // Validate file type
+    if (!file.name.match(/\.(xlsx|xls|csv)$/)) {
+      showToast('Invalid Format', 'Please upload an Excel (.xlsx, .xls) or CSV file.', 'error');
+      return;
+    }
+
+    setIsLoading(true);
+
     try {
-      if (!file.name.match(/\.(xlsx|xls|csv)$/)) {
-        throw new Error("Invalid file format. Please upload an Excel or CSV file.");
+      // Use Web Worker for parsing (non-blocking)
+      const newData = await parseFile(file);
+
+      if (newData.length === 0) {
+        throw new Error('The file appears to be empty.');
       }
-      const newData = await parseExcelFile(file);
+
+      // Process and save data
       await processData(newData);
+
     } catch (err: any) {
-      console.error(err);
-      showToast('Import Failed', err.message || "Failed to process file.", 'error');
+      console.error('[DataIngest] Upload error:', err);
+      showToast('Import Failed', err.message || 'Failed to process file.', 'error');
     } finally {
       setIsLoading(false);
     }
@@ -146,19 +162,35 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, onNex
             onDrop={onDrop}
         >
             <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-6">
-                {isLoading ? (
+                {isLoading || isProcessing ? (
                     <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
                 ) : (
                     <UploadCloud className="w-10 h-10 text-blue-600" />
                 )}
             </div>
-            
+
             <h3 className="text-lg font-semibold text-gray-900 mb-2">
-            {isLoading ? 'Processing Data...' : 'Drag & Drop your file here'}
+            {isLoading || isProcessing ? 'Processing Data...' : 'Drag & Drop your file here'}
             </h3>
             <p className="text-gray-500 mb-6 text-sm">
             Supports .xlsx, .xls, .csv. Data will be appended to existing records.
             </p>
+
+            {/* Progress Bar */}
+            {isProcessing && progress > 0 && (
+              <div className="w-full max-w-md mx-auto mb-6">
+                <div className="flex justify-between text-sm text-gray-600 mb-2">
+                  <span>Parsing file...</span>
+                  <span>{progress}%</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2.5">
+                  <div
+                    className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                    style={{ width: `${progress}%` }}
+                  ></div>
+                </div>
+              </div>
+            )}
 
             {!isLoading && (
                 <div className="relative inline-block">

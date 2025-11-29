@@ -15,7 +15,7 @@ import {
   PanelLeftOpen
 } from 'lucide-react';
 import { Project } from '../types';
-import { getProjects, deleteProject, saveProject } from '../utils/storage';
+import { getProjects, deleteProject, saveProject } from '../utils/storage-compat';
 import Skeleton from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
 
