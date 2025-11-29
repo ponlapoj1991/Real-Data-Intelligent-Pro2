@@ -107,6 +107,7 @@ export interface SeriesConfig {
   type: 'bar' | 'line' | 'area';
   measure: AggregateMethod;
   measureCol?: string;
+  dimension?: string;
   filters?: DashboardFilter[];  // Per-series filters for time comparison
   yAxis: 'left' | 'right';
   color: string;
@@ -167,6 +168,13 @@ export interface StyleConfig {
   showShadow?: boolean;
 }
 
+export type SortMode = 'none' | 'asc' | 'desc' | 'custom';
+export interface SortConfig {
+  mode: SortMode;
+  key?: 'total' | 'dimension';
+  customOrder?: string[];
+}
+
 export interface DashboardWidget {
   id: string;
   title: string;
@@ -213,6 +221,9 @@ export interface DashboardWidget {
 
   // Interactions
   interaction?: InteractionConfig;
+
+  // Sorting
+  sort?: SortConfig;
 
   // Template reference
   templateId?: string;

@@ -128,6 +128,43 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       }));
   };
 
+  const applySorting = (rows: any[], widget: DashboardWidget, valueKeys: string[], categoryOrder: string[] = []) => {
+    const sort = widget.sort;
+    if (!sort || sort.mode === 'none') {
+      if (categoryOrder.length === 0) return rows;
+      return [...rows].sort((a, b) => categoryOrder.indexOf(a.name) - categoryOrder.indexOf(b.name));
+    }
+
+    if (sort.mode === 'custom' && sort.customOrder && sort.customOrder.length > 0) {
+      return [...rows].sort((a, b) => {
+        const aIdx = sort.customOrder!.indexOf(a.name);
+        const bIdx = sort.customOrder!.indexOf(b.name);
+        if (aIdx === -1 && bIdx === -1) {
+          return categoryOrder.indexOf(a.name) - categoryOrder.indexOf(b.name);
+        }
+        if (aIdx === -1) return 1;
+        if (bIdx === -1) return -1;
+        return aIdx - bIdx;
+      });
+    }
+
+    const direction = sort.mode === 'asc' ? 1 : -1;
+    const key = sort.key || 'total';
+    const valueOf = (row: any) => {
+      if (key === 'dimension') return String(row.name || '');
+      return valueKeys.reduce((sum, k) => sum + (Number(row[k]) || 0), 0);
+    };
+
+    return [...rows].sort((a, b) => {
+      const aVal = valueOf(a);
+      const bVal = valueOf(b);
+      if (typeof aVal === 'string' || typeof bVal === 'string') {
+        return String(aVal).localeCompare(String(bVal)) * direction;
+      }
+      return (aVal as number - (bVal as number)) * direction;
+    });
+  };
+
   // --- Filter Logic ---
 
   const addFilter = (column: string, value: string = '') => {
@@ -324,6 +361,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
           const isPercentMode = barMode === 'percent';
           const stackKeys = new Set<string>();
           const groups: Record<string, Record<string, number>> = {};
+          const categoryOrder: string[] = [];
 
           widgetData.forEach(row => {
               const dimVal = String(row[widget.dimension] || '(Empty)');
@@ -331,7 +369,10 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
               
               stackKeys.add(stackVal);
               
-              if (!groups[dimVal]) groups[dimVal] = {};
+              if (!groups[dimVal]) {
+                groups[dimVal] = {};
+                categoryOrder.push(dimVal);
+              }
               if (!groups[dimVal][stackVal]) groups[dimVal][stackVal] = 0;
 
               if (widget.measure === 'count') {
@@ -341,7 +382,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
               }
           });
 
-          const result = Object.keys(groups).map(dim => {
+          let result = Object.keys(groups).map(dim => {
               const row: any = { name: dim };
               let total = 0;
               Object.keys(groups[dim]).forEach(stack => {
@@ -351,9 +392,6 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
               row.total = total;
               return row;
           });
-
-          // Sort by total desc
-          result.sort((a, b) => b.total - a.total);
 
           const normalized = isPercentMode
             ? result.map(row => {
@@ -370,8 +408,10 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
             })
             : result;
 
+          const sorted = applySorting(normalized, widget, Array.from(stackKeys), categoryOrder);
+
           return {
-              data: widget.limit ? normalized.slice(0, widget.limit) : normalized,
+              data: widget.limit ? sorted.slice(0, widget.limit) : sorted,
               isStack: barMode !== 'grouped',
               stackKeys: Array.from(stackKeys).sort()
           };
@@ -379,6 +419,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       
       // 3. STANDARD CHARTS
       const groups: Record<string, number> = {};
+      const categoryOrder: string[] = [];
       
       widgetData.forEach(row => {
           let groupKey = String(row[widget.dimension]);
@@ -399,7 +440,10 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
           keysToProcess.forEach(k => {
               if (!k) return;
-              if (!groups[k]) groups[k] = 0;
+              if (!groups[k]) {
+                groups[k] = 0;
+                categoryOrder.push(k);
+              }
               
               if (widget.measure === 'count' || widget.type === 'wordcloud') {
                   groups[k]++;
@@ -417,8 +461,6 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
             : groups[k]
       }));
 
-      result.sort((a, b) => b.value - a.value);
-
       if (widget.barMode === 'percent') {
           const total = result.reduce((acc, curr) => acc + (curr.value || 0), 0);
           if (total > 0) {
@@ -428,14 +470,18 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       
       const limit = widget.limit || 20;
 
-      if (result.length > limit) {
+      const sorted = applySorting(result, widget, ['value'], categoryOrder);
+
+      if (sorted.length > limit) {
           if (widget.type === 'wordcloud') {
-               result = result.slice(0, limit); 
+               result = sorted.slice(0, limit);
           } else {
-               const others = result.slice(limit).reduce((acc, curr) => acc + curr.value, 0);
-               result = result.slice(0, limit);
+               const others = sorted.slice(limit).reduce((acc, curr) => acc + curr.value, 0);
+               result = sorted.slice(0, limit);
                result.push({ name: 'Others', value: others });
           }
+      } else {
+        result = sorted;
       }
 
       return { data: result, isStack: false };
@@ -443,11 +489,13 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
   // --- Multi-Series Data Processing (Google Sheets Style) ---
   const processMultiSeriesData = (widget: DashboardWidget) => {
-    if (!widget.series || widget.series.length === 0 || !widget.dimension) {
+    if (!widget.series || widget.series.length === 0 || (!widget.dimension && widget.series.every(s => !s.dimension))) {
       return [];
     }
 
+    const axisKey = widget.dimension || 'category';
     const result: Record<string, any> = {};
+    const categoryOrder: string[] = [];
 
     // For each series
     widget.series.forEach(s => {
@@ -463,10 +511,13 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
       // Aggregate
       data.forEach(row => {
-        const dimValue = String(row[widget.dimension] || 'N/A');
+        const seriesDimension = s.dimension || widget.dimension;
+        if (!seriesDimension) return;
+        const dimValue = String(row[seriesDimension] || 'N/A');
 
         if (!result[dimValue]) {
-          result[dimValue] = { [widget.dimension]: dimValue };
+          result[dimValue] = { name: dimValue, [axisKey]: dimValue };
+          categoryOrder.push(dimValue);
         }
 
         if (s.measure === 'count') {
@@ -501,15 +552,8 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
     });
 
     // Sort and limit
-    const sorted = Object.values(result)
-      .sort((a, b) => {
-        const aVal = widget.series!.reduce((sum, s) => sum + (a[s.id] || 0), 0);
-        const bVal = widget.series!.reduce((sum, s) => sum + (b[s.id] || 0), 0);
-        return bVal - aVal;
-      })
-      .slice(0, widget.limit || 20);
-
-    return sorted;
+    const sorted = applySorting(Object.values(result), widget, widget.series!.map(s => s.id), categoryOrder);
+    return sorted.slice(0, widget.limit || 20);
   };
 
   const renderWidget = (widget: DashboardWidget) => {
@@ -526,6 +570,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
         if (!data || data.length === 0) return <div className="flex items-center justify-center h-full text-gray-400 text-sm">No Data</div>;
 
         const hasRightAxis = widget.series.some(s => s.yAxis === 'right');
+        const axisKey = widget.dimension || 'category';
         const legendConfig = widget.legend || { enabled: true, position: 'bottom', fontSize: 11, fontColor: '#666666', alignment: 'center' };
         const xAxisConfig = widget.xAxis || { fontSize: 11, fontColor: '#666666', slant: 0, showGridlines: true };
         const leftYAxisConfig = widget.leftYAxis || { fontSize: 11, fontColor: '#666666', min: 'auto', max: 'auto', format: '#,##0', showGridlines: true };
@@ -571,7 +616,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                   stroke="#f0f0f0"
                 />
                 <XAxis
-                  dataKey={widget.dimension}
+                  dataKey={axisKey}
                   angle={xAxisConfig.slant || 0}
                   textAnchor={xAxisConfig.slant ? 'end' : 'middle'}
                   height={xAxisConfig.slant === 90 ? 100 : xAxisConfig.slant === 45 ? 80 : 60}
@@ -622,7 +667,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                       fillOpacity={s.type === 'area' ? widget.style?.areaOpacity ?? 0.3 : 1}
                         strokeWidth={s.type === 'line' ? (widget.style?.lineWidth || 2) : 0}
                         radius={widget.style?.barRadius ? [widget.style.barRadius, widget.style.barRadius, 0, 0] : undefined}
-                      onClick={(barData: any) => handleChartClick(null, widget, barData[widget.dimension])}
+                      onClick={(barData: any) => handleChartClick(null, widget, barData[axisKey])}
                       className="cursor-pointer"
                     >
                       {dataLabelsConfig.enabled && (
@@ -641,7 +686,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                 })}
                 {widget.interaction?.enableBrush && (
                   <Brush
-                    dataKey={widget.dimension}
+                    dataKey={axisKey}
                     height={24}
                     travellerWidth={10}
                     stroke="#cbd5e1"

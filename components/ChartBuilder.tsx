@@ -22,7 +22,8 @@ import {
   CategoryConfig,
   InteractionConfig,
   StyleConfig,
-  SeriesConfig
+  SeriesConfig,
+  SortConfig
 } from '../types';
 import {
   ResponsiveContainer,
@@ -224,6 +225,8 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   const [limit, setLimit] = useState<number>(10);
   const [width, setWidth] = useState<'half' | 'full'>('half');
   const [seriesList, setSeriesList] = useState<SeriesConfig[]>([]);
+  const [sortConfig, setSortConfig] = useState<SortConfig>({ mode: 'none', key: 'total' });
+  const [customSortInput, setCustomSortInput] = useState('');
   const [categoryConfig, setCategoryConfig] = useState<Record<string, CategoryConfig>>({});
   const [templateId, setTemplateId] = useState<string>('');
   const [interaction, setInteraction] = useState<InteractionConfig>({ enableBrush: true, enableCrosshair: true, quickRanges: [10] });
@@ -237,6 +240,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
     type: base?.type || (type === 'line' ? 'line' : type === 'area' ? 'area' : 'bar'),
     measure: base?.measure || measure,
     measureCol: base?.measureCol || measureCol || undefined,
+    dimension: base?.dimension || dimension || undefined,
     filters: base?.filters || [],
     yAxis: base?.yAxis || 'left',
     color: base?.color || palette[index % palette.length],
@@ -332,6 +336,12 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
           })
         ]);
       }
+      if (initialWidget.sort) {
+        setSortConfig(initialWidget.sort);
+        if (initialWidget.sort.customOrder) {
+          setCustomSortInput(initialWidget.sort.customOrder.join(', '));
+        }
+      }
     } else {
       if (availableColumns.length > 0) {
         setDimension(availableColumns[0]);
@@ -341,17 +351,71 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
     }
   }, [initialWidget, availableColumns]);
 
+  const parseCustomOrder = (input: string) =>
+    input
+      .split(/\n|,/)
+      .map(item => item.trim())
+      .filter(Boolean);
+
+  const applySorting = (rows: any[], seriesKeys: string[], categoryOrder: string[]) => {
+    if (!sortConfig || sortConfig.mode === 'none') {
+      if (categoryOrder.length === 0) return rows;
+      return [...rows].sort((a, b) => categoryOrder.indexOf(a.name) - categoryOrder.indexOf(b.name));
+    }
+
+    if (sortConfig.mode === 'custom') {
+      const order = (sortConfig.customOrder && sortConfig.customOrder.length > 0)
+        ? sortConfig.customOrder
+        : parseCustomOrder(customSortInput);
+      if (order.length === 0) return rows;
+      return [...rows].sort((a, b) => {
+        const aIdx = order.indexOf(a.name);
+        const bIdx = order.indexOf(b.name);
+        if (aIdx === -1 && bIdx === -1) {
+          return categoryOrder.indexOf(a.name) - categoryOrder.indexOf(b.name);
+        }
+        if (aIdx === -1) return 1;
+        if (bIdx === -1) return -1;
+        return aIdx - bIdx;
+      });
+    }
+
+    const direction = sortConfig.mode === 'asc' ? 1 : -1;
+    const key = sortConfig.key || 'total';
+    const valueOf = (row: any) => {
+      if (key === 'dimension') return String(row.name || '');
+      return seriesKeys.reduce((sum, sk) => sum + (Number(row[sk]) || 0), 0);
+    };
+
+    return [...rows].sort((a, b) => {
+      const aVal = valueOf(a);
+      const bVal = valueOf(b);
+      if (typeof aVal === 'string' || typeof bVal === 'string') {
+        return String(aVal).localeCompare(String(bVal)) * direction;
+      }
+      return (aVal as number - (bVal as number)) * direction;
+    });
+  };
+
   // Aggregate data for preview (multi-series aware)
   const previewData = useMemo(() => {
-    if (!dimension || data.length === 0) return [];
+    if ((!dimension && seriesList.every(s => !s.dimension)) || data.length === 0) return [];
+
+    const axisKey = dimension || 'category';
 
     if (seriesList.length > 0) {
       const buckets: Record<string, any> = {};
+      const categoryOrder: string[] = [];
 
       seriesList.forEach(series => {
+        const seriesDimension = series.dimension || dimension;
+        if (!seriesDimension) return;
         data.forEach(row => {
-          const dimValue = String(row[dimension] || 'N/A');
-          if (!buckets[dimValue]) buckets[dimValue] = { name: dimValue };
+          const dimValue = String(row[seriesDimension] ?? 'N/A');
+          if (!buckets[dimValue]) {
+            buckets[dimValue] = { name: dimValue, [axisKey]: dimValue };
+            categoryOrder.push(dimValue);
+          }
 
           if (series.measure === 'count') {
             buckets[dimValue][series.id] = (buckets[dimValue][series.id] || 0) + 1;
@@ -383,25 +447,20 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
         });
       });
 
-      return Object.values(buckets)
-        .map((bucket: any) => ({
-          ...bucket,
-          __total: seriesList.reduce((sum, s) => sum + (bucket[s.id] || 0), 0)
-        }))
-        .sort((a: any, b: any) => b.__total - a.__total)
-        .slice(0, limit)
-        .map((bucket: any) => {
-          const { __total, ...rest } = bucket;
-          return rest;
-        });
+      const sorted = applySorting(Object.values(buckets), seriesList.map(s => s.id), categoryOrder);
+      return sorted.slice(0, limit);
     }
 
     const groups: Record<string, number> = {};
+    const categoryOrder: string[] = [];
 
     data.forEach(row => {
-      const dimValue = String(row[dimension] || 'N/A');
+      const dimValue = String(row[axisKey] || 'N/A');
 
-      if (!groups[dimValue]) groups[dimValue] = 0;
+      if (!groups[dimValue]) {
+        groups[dimValue] = 0;
+        categoryOrder.push(dimValue);
+      }
 
       if (measure === 'count') {
         groups[dimValue]++;
@@ -419,24 +478,20 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       }
     });
 
-    if (measure === 'avg') {
-      Object.keys(groups).filter(k => !k.includes('_')).forEach(k => {
-        const count = groups[`${k}_count`] || 0;
-        if (count > 0) {
-          groups[k] = groups[`${k}_sum`] / count;
+    const rows = Object.entries(groups)
+      .filter(([key]) => !key.includes('_'))
+      .map(([name, value]) => {
+        if (measure === 'avg') {
+          const sum = groups[`${name}_sum`] || 0;
+          const count = groups[`${name}_count`] || 1;
+          return { name, [measureCol || 'value']: sum / count };
         }
+        return { name, value };
       });
-    }
 
-    return Object.keys(groups)
-      .filter(k => !k.includes('_'))
-      .map(k => ({
-        name: k,
-        value: groups[k]
-      }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, limit);
-  }, [dimension, measure, measureCol, data, limit, seriesList]);
+    const sorted = applySorting(rows, seriesList.length ? seriesList.map(s => s.id) : ['value'], categoryOrder);
+    return sorted.slice(0, limit);
+  }, [dimension, measure, measureCol, data, limit, seriesList, sortConfig, customSortInput]);
 
   const applyTemplate = (templateIdToApply: string) => {
     const template = chartTemplates.find(t => t.id === templateIdToApply);
@@ -468,8 +523,9 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   };
 
   const handleSave = () => {
-    if (!dimension) {
-      alert('Please select a dimension for the X-axis.');
+    const widgetDimension = dimension || normalizedSeries.find(s => s.dimension)?.dimension;
+    if (!widgetDimension) {
+      alert('Please select a dimension for the X-axis (or per-series dimension).');
       return;
     }
 
@@ -480,12 +536,17 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       return;
     }
 
+    const preparedSort: SortConfig = {
+      ...sortConfig,
+      customOrder: sortConfig.mode === 'custom' ? parseCustomOrder(customSortInput) : undefined,
+    };
+
     const primarySeries = normalizedSeries[0];
     const widget: DashboardWidget = {
       id: initialWidget?.id || generateId(),
       title,
       type,
-      dimension,
+      dimension: widgetDimension,
       measure: primarySeries?.measure || measure,
       measureCol: primarySeries?.measureCol || measureCol || undefined,
       series: normalizedSeries,
@@ -501,7 +562,8 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       dataLabels,
       xAxis,
       leftYAxis,
-      categoryConfig
+      categoryConfig,
+      sort: preparedSort
     };
 
     onSave(widget);
@@ -861,6 +923,27 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                                 </div>
                               </div>
 
+                              <div className="grid grid-cols-3 gap-3">
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-700 mb-1">Dimension (optional)</label>
+                                  <select
+                                    value={series.dimension || ''}
+                                    onChange={(e) => {
+                                      const next = [...seriesList];
+                                      next[idx] = { ...series, dimension: e.target.value || undefined };
+                                      setSeriesList(next);
+                                    }}
+                                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                                  >
+                                    <option value="">Use chart dimension ({dimension || 'select dimension'})</option>
+                                    {availableColumns.map(col => (
+                                      <option key={col} value={col}>{col}</option>
+                                    ))}
+                                  </select>
+                                  <p className="text-[11px] text-gray-500 mt-1">Pick a different category for this series when mixing bars and lines.</p>
+                                </div>
+                              </div>
+
                               <div className="flex items-center gap-3">
                                 <div className="flex items-center gap-2 text-xs text-gray-600">
                                   <span>Color</span>
@@ -912,6 +995,43 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                       className="w-full"
                       style={{ outline: 'none' }}
                     />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-gray-700">Sorting</label>
+                    <div className="grid grid-cols-3 gap-3">
+                      <select
+                        value={sortConfig.mode}
+                        onChange={(e) => setSortConfig({ ...sortConfig, mode: e.target.value as SortConfig['mode'] })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                      >
+                        <option value="none">Keep data order</option>
+                        <option value="desc">Descending</option>
+                        <option value="asc">Ascending</option>
+                        <option value="custom">Custom order</option>
+                      </select>
+                      <select
+                        value={sortConfig.key || 'total'}
+                        onChange={(e) => setSortConfig({ ...sortConfig, key: e.target.value as SortConfig['key'] })}
+                        disabled={sortConfig.mode === 'custom' || sortConfig.mode === 'none'}
+                        className="w-full px-3 py-2 border border-gray-300 rounded text-sm disabled:bg-gray-100"
+                      >
+                        <option value="total">By value</option>
+                        <option value="dimension">By label</option>
+                      </select>
+                    </div>
+                    {sortConfig.mode === 'custom' && (
+                      <div>
+                        <textarea
+                          value={customSortInput}
+                          onChange={(e) => setCustomSortInput(e.target.value)}
+                          placeholder="Enter categories in the desired order, separated by commas or new lines"
+                          className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                          rows={2}
+                        />
+                        <p className="text-xs text-gray-500 mt-1">Example: Facebook, Twitter, Instagram</p>
+                      </div>
+                    )}
                   </div>
 
                   <div>
