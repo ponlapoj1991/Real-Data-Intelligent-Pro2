@@ -1041,7 +1041,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                   {/* Hint for interactivity */}
                   {!isPresentationMode && widget.type !== 'kpi' && widget.type !== 'table' && (
                       <div className="absolute bottom-2 right-4 text-[10px] text-gray-300 opacity-0 group-hover:opacity-100 pointer-events-none flex items-center">
-                          <MousePointerClick className="w-3 h-3 mr-1" /> 
+                          <MousePointer2 className="w-3 h-3 mr-1" />
                           {interactionMode === 'filter' ? 'Filter' : 'Drill'}
                       </div>
                   )}
