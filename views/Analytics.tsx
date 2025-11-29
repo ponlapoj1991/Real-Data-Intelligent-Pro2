@@ -1,8 +1,8 @@
 
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Project, DashboardWidget, DashboardFilter, DrillDownState, RawRow } from '../types';
-import { 
-    PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, AreaChart, Area, LabelList
+import {
+    PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, AreaChart, Area, LabelList, ComposedChart, Legend as RechartsLegend
 } from 'recharts';
 import { Sparkles, Bot, Loader2, Plus, LayoutGrid, Trash2, Pencil, Filter, X, Presentation, FileOutput, Eye, EyeOff, Table, Download, ChevronRight, MousePointer2, MousePointerClick, MessageSquarePlus, Command } from 'lucide-react';
 import { analyzeProjectData, generateWidgetFromPrompt, DataSummary } from '../utils/ai';
@@ -401,6 +401,77 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       return { data: result, isStack: false };
   };
 
+  // --- Multi-Series Data Processing (Google Sheets Style) ---
+  const processMultiSeriesData = (widget: DashboardWidget) => {
+    if (!widget.series || widget.series.length === 0 || !widget.dimension) {
+      return [];
+    }
+
+    const result: Record<string, any> = {};
+
+    // For each series
+    widget.series.forEach(s => {
+      // Apply widget-level filters first
+      let data = applyWidgetFilters(filteredData, widget.filters);
+
+      // Then apply series-specific filters
+      if (s.filters && s.filters.length > 0) {
+        data = data.filter(row =>
+          s.filters!.every(f => String(row[f.column]).toLowerCase() === f.value.toLowerCase())
+        );
+      }
+
+      // Aggregate
+      data.forEach(row => {
+        const dimValue = String(row[widget.dimension] || 'N/A');
+
+        if (!result[dimValue]) {
+          result[dimValue] = { [widget.dimension]: dimValue };
+        }
+
+        if (s.measure === 'count') {
+          result[dimValue][s.id] = (result[dimValue][s.id] || 0) + 1;
+        } else if (s.measure === 'sum' && s.measureCol) {
+          const val = parseFloat(String(row[s.measureCol])) || 0;
+          result[dimValue][s.id] = (result[dimValue][s.id] || 0) + val;
+        } else if (s.measure === 'avg' && s.measureCol) {
+          if (!result[dimValue][`${s.id}_sum`]) {
+            result[dimValue][`${s.id}_sum`] = 0;
+            result[dimValue][`${s.id}_count`] = 0;
+          }
+          const val = parseFloat(String(row[s.measureCol])) || 0;
+          result[dimValue][`${s.id}_sum`] += val;
+          result[dimValue][`${s.id}_count`] += 1;
+        }
+      });
+    });
+
+    // Finalize averages
+    Object.values(result).forEach(item => {
+      widget.series!.forEach(s => {
+        if (s.measure === 'avg') {
+          const count = item[`${s.id}_count`] || 0;
+          if (count > 0) {
+            item[s.id] = item[`${s.id}_sum`] / count;
+          }
+          delete item[`${s.id}_sum`];
+          delete item[`${s.id}_count`];
+        }
+      });
+    });
+
+    // Sort and limit
+    const sorted = Object.values(result)
+      .sort((a, b) => {
+        const aVal = widget.series!.reduce((sum, s) => sum + (a[s.id] || 0), 0);
+        const bVal = widget.series!.reduce((sum, s) => sum + (b[s.id] || 0), 0);
+        return bVal - aVal;
+      })
+      .slice(0, widget.limit || 20);
+
+    return sorted;
+  };
+
   const handleAnalyze = async () => {
     setIsAnalyzing(true);
     try {
@@ -422,6 +493,109 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
   };
 
   const renderWidget = (widget: DashboardWidget) => {
+      // NEW: Multi-Series Chart Rendering (Google Sheets Style)
+      if (widget.series && widget.series.length > 0 && widget.type !== 'pie' && widget.type !== 'kpi' && widget.type !== 'wordcloud' && widget.type !== 'table') {
+        const data = processMultiSeriesData(widget);
+        if (!data || data.length === 0) return <div className="flex items-center justify-center h-full text-gray-400 text-sm">No Data</div>;
+
+        const hasRightAxis = widget.series.some(s => s.yAxis === 'right');
+        const legendConfig = widget.legend || { enabled: true, position: 'bottom', fontSize: 11, fontColor: '#666666', alignment: 'center' };
+        const xAxisConfig = widget.xAxis || { fontSize: 11, fontColor: '#666666', slant: 0, showGridlines: true };
+        const leftYAxisConfig = widget.leftYAxis || { fontSize: 11, fontColor: '#666666', min: 'auto', max: 'auto', format: '#,##0', showGridlines: true };
+        const rightYAxisConfig = widget.rightYAxis || { fontSize: 11, fontColor: '#666666', min: 'auto', max: 'auto', format: '#,##0', showGridlines: false };
+        const dataLabelsConfig = widget.dataLabels || { enabled: false, position: 'top', fontSize: 11, fontWeight: 'normal', color: '#000000' };
+
+        return (
+          <div className="h-full flex flex-col">
+            {/* Chart Title */}
+            {widget.chartTitle && (
+              <div className="text-center mb-2">
+                <h3 className="text-base font-bold text-gray-900">{widget.chartTitle}</h3>
+                {widget.subtitle && <p className="text-xs text-gray-600">{widget.subtitle}</p>}
+              </div>
+            )}
+
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={data}>
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  stroke="#f0f0f0"
+                />
+                <XAxis
+                  dataKey={widget.dimension}
+                  angle={xAxisConfig.slant || 0}
+                  textAnchor={xAxisConfig.slant ? 'end' : 'middle'}
+                  height={xAxisConfig.slant === 90 ? 100 : xAxisConfig.slant === 45 ? 80 : 60}
+                  tick={{ fontSize: xAxisConfig.fontSize, fill: xAxisConfig.fontColor }}
+                  label={xAxisConfig.title ? { value: xAxisConfig.title, position: 'insideBottom', offset: -5 } : undefined}
+                />
+                <YAxis
+                  yAxisId="left"
+                  tick={{ fontSize: leftYAxisConfig.fontSize, fill: leftYAxisConfig.fontColor }}
+                  label={leftYAxisConfig.title ? { value: leftYAxisConfig.title, angle: -90, position: 'insideLeft' } : undefined}
+                  domain={[
+                    leftYAxisConfig.min === 'auto' ? 'auto' : leftYAxisConfig.min,
+                    leftYAxisConfig.max === 'auto' ? 'auto' : leftYAxisConfig.max
+                  ]}
+                />
+                {hasRightAxis && (
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    tick={{ fontSize: rightYAxisConfig.fontSize, fill: rightYAxisConfig.fontColor }}
+                    label={rightYAxisConfig.title ? { value: rightYAxisConfig.title, angle: 90, position: 'insideRight' } : undefined}
+                    domain={[
+                      rightYAxisConfig.min === 'auto' ? 'auto' : rightYAxisConfig.min,
+                      rightYAxisConfig.max === 'auto' ? 'auto' : rightYAxisConfig.max
+                    ]}
+                  />
+                )}
+                <Tooltip />
+                {legendConfig.enabled && (
+                  <RechartsLegend
+                    wrapperStyle={{ fontSize: legendConfig.fontSize }}
+                    verticalAlign={legendConfig.position === 'top' || legendConfig.position === 'bottom' ? legendConfig.position : 'bottom'}
+                    align={legendConfig.alignment || 'center'}
+                  />
+                )}
+
+                {widget.series.map((s, idx) => {
+                  const Component = s.type === 'line' ? Line : s.type === 'area' ? Area : Bar;
+                  return (
+                    <Component
+                      key={s.id}
+                      yAxisId={s.yAxis}
+                      type="monotone"
+                      dataKey={s.id}
+                      name={s.label}
+                      fill={s.color}
+                      stroke={s.color}
+                      fillOpacity={s.type === 'area' ? 0.3 : 1}
+                      strokeWidth={s.type === 'line' ? 2 : 0}
+                      onClick={(barData: any) => handleChartClick(null, widget, barData[widget.dimension])}
+                      className="cursor-pointer"
+                    >
+                      {dataLabelsConfig.enabled && (
+                        <LabelList
+                          dataKey={s.id}
+                          position={dataLabelsConfig.position as any}
+                          style={{
+                            fontSize: dataLabelsConfig.fontSize,
+                            fontWeight: dataLabelsConfig.fontWeight,
+                            fill: dataLabelsConfig.color
+                          }}
+                        />
+                      )}
+                    </Component>
+                  );
+                })}
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        );
+      }
+
+      // LEGACY: Single-series chart rendering
       const { data, isStack, stackKeys } = processWidgetData(widget);
       const palette = getPalette(widget);
       const showLegend = widget.showLegend !== false;
