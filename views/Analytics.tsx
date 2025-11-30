@@ -398,6 +398,11 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       data.forEach(row => {
         const dimValue = String(row[widget.dimension] || 'N/A');
 
+        // Apply category filter
+        if (widget.categoryFilter && widget.categoryFilter.length > 0 && !widget.categoryFilter.includes(dimValue)) {
+          return;
+        }
+
         if (!result[dimValue]) {
           result[dimValue] = { [widget.dimension]: dimValue };
         }
@@ -433,14 +438,37 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       });
     });
 
-    // Sort and limit
-    const sorted = Object.values(result)
-      .sort((a, b) => {
-        const aVal = widget.series!.reduce((sum, s) => sum + (a[s.id] || 0), 0);
-        const bVal = widget.series!.reduce((sum, s) => sum + (b[s.id] || 0), 0);
-        return bVal - aVal;
-      })
-      .slice(0, widget.limit || 20);
+    // Apply sorting based on widget.sortBy
+    let sorted = Object.values(result);
+    const sortBy = widget.sortBy || 'value-desc';
+    const firstSeriesId = widget.series[0]?.id || '';
+
+    switch (sortBy) {
+      case 'value-desc':
+        sorted = sorted.sort((a, b) => {
+          const aVal = widget.series!.reduce((sum, s) => sum + (a[s.id] || 0), 0);
+          const bVal = widget.series!.reduce((sum, s) => sum + (b[s.id] || 0), 0);
+          return bVal - aVal;
+        });
+        break;
+      case 'value-asc':
+        sorted = sorted.sort((a, b) => {
+          const aVal = widget.series!.reduce((sum, s) => sum + (a[s.id] || 0), 0);
+          const bVal = widget.series!.reduce((sum, s) => sum + (b[s.id] || 0), 0);
+          return aVal - bVal;
+        });
+        break;
+      case 'name-asc':
+        sorted = sorted.sort((a, b) => String(a[widget.dimension]).localeCompare(String(b[widget.dimension])));
+        break;
+      case 'name-desc':
+        sorted = sorted.sort((a, b) => String(b[widget.dimension]).localeCompare(String(a[widget.dimension])));
+        break;
+      case 'original':
+      default:
+        // No sorting for timeline/date charts
+        break;
+    }
 
     return sorted;
   };
@@ -483,6 +511,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
         const leftYAxisConfig = widget.leftYAxis || { fontSize: 11, fontColor: '#666666', min: 'auto', max: 'auto', format: '#,##0', showGridlines: true };
         const rightYAxisConfig = widget.rightYAxis || { fontSize: 11, fontColor: '#666666', min: 'auto', max: 'auto', format: '#,##0', showGridlines: false };
         const dataLabelsConfig = widget.dataLabels || { enabled: false, position: 'top', fontSize: 11, fontWeight: 'normal', color: '#000000' };
+        const barOrientation = widget.barOrientation || 'vertical';
 
         return (
           <div className="h-full flex flex-col">
@@ -495,39 +524,60 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
             )}
 
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={data}>
+              <ComposedChart
+                data={data}
+                layout={barOrientation === 'horizontal' ? 'vertical' : 'horizontal'}
+              >
                 <CartesianGrid
                   strokeDasharray="3 3"
                   stroke="#f0f0f0"
                 />
-                <XAxis
-                  dataKey={widget.dimension}
-                  angle={xAxisConfig.slant || 0}
-                  textAnchor={xAxisConfig.slant ? 'end' : 'middle'}
-                  height={xAxisConfig.slant === 90 ? 100 : xAxisConfig.slant === 45 ? 80 : 60}
-                  tick={{ fontSize: xAxisConfig.fontSize, fill: xAxisConfig.fontColor }}
-                  label={xAxisConfig.title ? { value: xAxisConfig.title, position: 'insideBottom', offset: -5 } : undefined}
-                />
-                <YAxis
-                  yAxisId="left"
-                  tick={{ fontSize: leftYAxisConfig.fontSize, fill: leftYAxisConfig.fontColor }}
-                  label={leftYAxisConfig.title ? { value: leftYAxisConfig.title, angle: -90, position: 'insideLeft' } : undefined}
-                  domain={[
-                    leftYAxisConfig.min === 'auto' ? 'auto' : leftYAxisConfig.min,
-                    leftYAxisConfig.max === 'auto' ? 'auto' : leftYAxisConfig.max
-                  ]}
-                />
-                {hasRightAxis && (
-                  <YAxis
-                    yAxisId="right"
-                    orientation="right"
-                    tick={{ fontSize: rightYAxisConfig.fontSize, fill: rightYAxisConfig.fontColor }}
-                    label={rightYAxisConfig.title ? { value: rightYAxisConfig.title, angle: 90, position: 'insideRight' } : undefined}
-                    domain={[
-                      rightYAxisConfig.min === 'auto' ? 'auto' : rightYAxisConfig.min,
-                      rightYAxisConfig.max === 'auto' ? 'auto' : rightYAxisConfig.max
-                    ]}
-                  />
+                {barOrientation === 'vertical' ? (
+                  <>
+                    <XAxis
+                      dataKey={widget.dimension}
+                      angle={xAxisConfig.slant || 0}
+                      textAnchor={xAxisConfig.slant ? 'end' : 'middle'}
+                      height={xAxisConfig.slant === 90 ? 100 : xAxisConfig.slant === 45 ? 80 : 60}
+                      tick={{ fontSize: xAxisConfig.fontSize, fill: xAxisConfig.fontColor }}
+                      label={xAxisConfig.title ? { value: xAxisConfig.title, position: 'insideBottom', offset: -5 } : undefined}
+                    />
+                    <YAxis
+                      yAxisId="left"
+                      tick={{ fontSize: leftYAxisConfig.fontSize, fill: leftYAxisConfig.fontColor }}
+                      label={leftYAxisConfig.title ? { value: leftYAxisConfig.title, angle: -90, position: 'insideLeft' } : undefined}
+                      domain={[
+                        leftYAxisConfig.min === 'auto' ? 'auto' : leftYAxisConfig.min,
+                        leftYAxisConfig.max === 'auto' ? 'auto' : leftYAxisConfig.max
+                      ]}
+                    />
+                    {hasRightAxis && (
+                      <YAxis
+                        yAxisId="right"
+                        orientation="right"
+                        tick={{ fontSize: rightYAxisConfig.fontSize, fill: rightYAxisConfig.fontColor }}
+                        label={rightYAxisConfig.title ? { value: rightYAxisConfig.title, angle: 90, position: 'insideRight' } : undefined}
+                        domain={[
+                          rightYAxisConfig.min === 'auto' ? 'auto' : rightYAxisConfig.min,
+                          rightYAxisConfig.max === 'auto' ? 'auto' : rightYAxisConfig.max
+                        ]}
+                      />
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <XAxis
+                      type="number"
+                      tick={{ fontSize: leftYAxisConfig.fontSize, fill: leftYAxisConfig.fontColor }}
+                      label={leftYAxisConfig.title ? { value: leftYAxisConfig.title, position: 'insideBottom', offset: -5 } : undefined}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey={widget.dimension}
+                      tick={{ fontSize: xAxisConfig.fontSize, fill: xAxisConfig.fontColor }}
+                      label={xAxisConfig.title ? { value: xAxisConfig.title, angle: -90, position: 'insideLeft' } : undefined}
+                    />
+                  </>
                 )}
                 <Tooltip />
                 {legendConfig.enabled && (
@@ -543,7 +593,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                   return (
                     <Component
                       key={s.id}
-                      yAxisId={s.yAxis}
+                      yAxisId={barOrientation === 'vertical' ? s.yAxis : undefined}
                       type="monotone"
                       dataKey={s.id}
                       name={s.label}
