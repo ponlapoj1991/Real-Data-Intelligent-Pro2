@@ -283,6 +283,16 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
     showGridlines: true
   });
 
+  const [rightYAxis, setRightYAxis] = useState<AxisConfig>({
+    title: '',
+    min: 'auto',
+    max: 'auto',
+    fontSize: 11,
+    fontColor: '#666666',
+    format: '#,##0',
+    showGridlines: false
+  });
+
   // UI state
   const [openSections, setOpenSections] = useState<Set<string>>(new Set());
   const [categoryModal, setCategoryModal] = useState<{ isOpen: boolean; category: string } | null>(null);
@@ -293,7 +303,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
     if (nextType === 'combo') {
       setSeriesList(prev => {
         const ensureTwo = prev.length >= 2 ? prev : [...prev, createSeries(prev.length, { type: 'line' })];
-        return ensureTwo.map((s, idx) => ({ ...s, type: idx === 0 ? 'bar' : s.type }));
+        return ensureTwo.map((s, idx) => ({ ...s, type: idx === 0 ? 'bar' : s.type, yAxis: idx === 0 ? 'left' : 'right' }));
       });
       return;
     }
@@ -322,6 +332,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       if (initialWidget.dataLabels) setDataLabels(initialWidget.dataLabels);
       setXAxis(initialWidget.xAxis || xAxis);
       setLeftYAxis(initialWidget.leftYAxis || leftYAxis);
+      setRightYAxis(initialWidget.rightYAxis || rightYAxis);
       if (initialWidget.series && initialWidget.series.length > 0) {
         setSeriesList(initialWidget.series);
       } else {
@@ -535,13 +546,12 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   };
 
   const handleSave = () => {
+    const normalizedSeries = seriesList.length > 0 ? seriesList : [createSeries(0)];
     const widgetDimension = dimension || normalizedSeries.find(s => s.dimension)?.dimension;
     if (!widgetDimension) {
       alert('Please select a dimension for the X-axis (or per-series dimension).');
       return;
     }
-
-    const normalizedSeries = seriesList.length > 0 ? seriesList : [createSeries(0)];
     const invalidMeasure = normalizedSeries.some(s => (s.measure === 'sum' || s.measure === 'avg') && !s.measureCol);
     if (invalidMeasure) {
       alert('Select a value column for SUM or AVERAGE series.');
@@ -574,6 +584,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       dataLabels,
       xAxis,
       leftYAxis,
+      rightYAxis,
       categoryConfig,
       sort: preparedSort
     };
@@ -703,14 +714,19 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                             leftYAxis.min === 'auto' ? 'auto' : leftYAxis.min,
                             leftYAxis.max === 'auto' ? 'auto' : leftYAxis.max
                           ]}
+                          label={leftYAxis.title ? { value: leftYAxis.title, angle: -90, position: 'insideLeft' } : undefined}
                           style={{ outline: 'none' }}
                         />
                         {seriesList.some(s => s.yAxis === 'right') && (
                           <YAxis
                             yAxisId="right"
                             orientation="right"
-                            tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }}
-                            domain={[leftYAxis.min === 'auto' ? 'auto' : leftYAxis.min, leftYAxis.max === 'auto' ? 'auto' : leftYAxis.max]}
+                            tick={{ fontSize: rightYAxis.fontSize, fill: rightYAxis.fontColor }}
+                            domain={[
+                              rightYAxis.min === 'auto' ? 'auto' : rightYAxis.min,
+                              rightYAxis.max === 'auto' ? 'auto' : rightYAxis.max
+                            ]}
+                            label={rightYAxis.title ? { value: rightYAxis.title, angle: 90, position: 'insideRight' } : undefined}
                             style={{ outline: 'none' }}
                           />
                         )}
@@ -1429,7 +1445,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                     >
                       <div className="space-y-3">
                         <div>
-                          <label className="block text-xs font-medium text-gray-700 mb-1">Title</label>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Left axis title</label>
                           <input
                             type="text"
                             value={leftYAxis.title || ''}
@@ -1468,6 +1484,53 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                               placeholder="auto"
                               style={{ outline: 'none' }}
                             />
+                          </div>
+                        </div>
+
+                        <div className="border-t border-gray-200 pt-3 mt-2">
+                          <div className="flex items-center justify-between mb-2">
+                            <label className="text-xs font-medium text-gray-700">Right axis title</label>
+                            <span className="text-[11px] text-gray-500">For combo / dual metrics</span>
+                          </div>
+                          <input
+                            type="text"
+                            value={rightYAxis.title || ''}
+                            onChange={(e) => setRightYAxis({ ...rightYAxis, title: e.target.value })}
+                            className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                            style={{ outline: 'none' }}
+                            placeholder="e.g., Total Engagement"
+                          />
+
+                          <div className="grid grid-cols-2 gap-3 mt-3">
+                            <div>
+                              <label className="block text-xs font-medium text-gray-700 mb-1">Min</label>
+                              <input
+                                type="text"
+                                value={rightYAxis.min === 'auto' ? 'auto' : rightYAxis.min || 'auto'}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setRightYAxis({ ...rightYAxis, min: val === 'auto' ? 'auto' : parseFloat(val) || 0 });
+                                }}
+                                className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                                placeholder="auto"
+                                style={{ outline: 'none' }}
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-medium text-gray-700 mb-1">Max</label>
+                              <input
+                                type="text"
+                                value={rightYAxis.max === 'auto' ? 'auto' : rightYAxis.max || 'auto'}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setRightYAxis({ ...rightYAxis, max: val === 'auto' ? 'auto' : parseFloat(val) || 0 });
+                                }}
+                                className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                                placeholder="auto"
+                                style={{ outline: 'none' }}
+                              />
+                            </div>
                           </div>
                         </div>
                       </div>
