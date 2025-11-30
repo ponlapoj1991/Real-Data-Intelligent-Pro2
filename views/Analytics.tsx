@@ -511,9 +511,11 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       return [];
     }
 
-    const axisKey = widget.dimension || widget.series.find(s => s.dimension)?.dimension || 'category';
+    const resolvedDimension = widget.dimension || widget.series.find(s => s.dimension)?.dimension || 'category';
+    const axisKey = resolvedDimension;
     const result: Record<string, any> = {};
     const categoryOrder: string[] = [];
+    const seenCategories = new Set<string>();
     const parseNumber = (val: any) => {
       if (typeof val === 'string') {
         const cleaned = val.replace(/,/g, '').trim();
@@ -523,6 +525,16 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       const num = Number(val);
       return isNaN(num) ? 0 : num;
     };
+
+    // Seed category order from the shared dimension to keep combo axes aligned
+    applyWidgetFilters(filteredData, widget.filters).forEach(row => {
+      const baseKey = String(row[resolvedDimension] ?? 'N/A');
+      if (!seenCategories.has(baseKey)) {
+        seenCategories.add(baseKey);
+        categoryOrder.push(baseKey);
+        result[baseKey] = { name: baseKey, [axisKey]: baseKey };
+      }
+    });
 
     // For each series
     widget.series.forEach(s => {
@@ -538,28 +550,29 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
       // Aggregate
       data.forEach(row => {
-        const seriesDimension = s.dimension || widget.dimension;
-        if (!seriesDimension) return;
-        const dimValue = String(row[seriesDimension] || 'N/A');
+        const seriesDimension = s.dimension || resolvedDimension;
+        const dimValue = String(row[seriesDimension] ?? 'N/A');
+        const axisValue = String(row[resolvedDimension] ?? dimValue);
 
-        if (!result[dimValue]) {
-          result[dimValue] = { name: dimValue, [axisKey]: dimValue };
-          categoryOrder.push(dimValue);
+        if (!seenCategories.has(axisValue)) {
+          seenCategories.add(axisValue);
+          categoryOrder.push(axisValue);
+          result[axisValue] = { name: axisValue, [axisKey]: axisValue };
         }
 
         if (s.measure === 'count') {
-          result[dimValue][s.id] = (result[dimValue][s.id] || 0) + 1;
+          result[axisValue][s.id] = (result[axisValue][s.id] || 0) + 1;
         } else if (s.measure === 'sum' && s.measureCol) {
           const val = parseNumber(row[s.measureCol]);
-          result[dimValue][s.id] = (result[dimValue][s.id] || 0) + val;
+          result[axisValue][s.id] = (result[axisValue][s.id] || 0) + val;
         } else if (s.measure === 'avg' && s.measureCol) {
-          if (!result[dimValue][`${s.id}_sum`]) {
-            result[dimValue][`${s.id}_sum`] = 0;
-            result[dimValue][`${s.id}_count`] = 0;
+          if (!result[axisValue][`${s.id}_sum`]) {
+            result[axisValue][`${s.id}_sum`] = 0;
+            result[axisValue][`${s.id}_count`] = 0;
           }
           const val = parseNumber(row[s.measureCol]);
-          result[dimValue][`${s.id}_sum`] += val;
-          result[dimValue][`${s.id}_count`] += 1;
+          result[axisValue][`${s.id}_sum`] += val;
+          result[axisValue][`${s.id}_count`] += 1;
         }
       });
     });

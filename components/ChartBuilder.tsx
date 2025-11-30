@@ -410,9 +410,10 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
 
   // Aggregate data for preview (multi-series aware)
   const previewData = useMemo(() => {
-    if ((!dimension && seriesList.every(s => !s.dimension)) || data.length === 0) return [];
+    const resolvedDimension = dimension || seriesList.find(s => s.dimension)?.dimension;
+    if ((!resolvedDimension && seriesList.every(s => !s.dimension)) || data.length === 0) return [];
 
-    const axisKey = dimension || 'category';
+    const axisKey = resolvedDimension || 'category';
     const parseNumber = (val: any) => {
       if (typeof val === 'string') {
         const cleaned = val.replace(/,/g, '').trim();
@@ -426,30 +427,44 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
     if (seriesList.length > 0) {
       const buckets: Record<string, any> = {};
       const categoryOrder: string[] = [];
+      const seenCategories = new Set<string>();
+
+      // Seed categories from the shared axis dimension to keep X labels stable
+      data.forEach(row => {
+        const baseKey = String(row[resolvedDimension || ''] ?? 'N/A');
+        if (!seenCategories.has(baseKey)) {
+          seenCategories.add(baseKey);
+          categoryOrder.push(baseKey);
+          buckets[baseKey] = { name: baseKey, [axisKey]: baseKey };
+        }
+      });
 
       seriesList.forEach(series => {
-        const seriesDimension = series.dimension || dimension;
+        const seriesDimension = series.dimension || resolvedDimension;
         if (!seriesDimension) return;
         data.forEach(row => {
           const dimValue = String(row[seriesDimension] ?? 'N/A');
-          if (!buckets[dimValue]) {
-            buckets[dimValue] = { name: dimValue, [axisKey]: dimValue };
-            categoryOrder.push(dimValue);
+          const axisValue = String(row[resolvedDimension || seriesDimension] ?? dimValue);
+
+          if (!seenCategories.has(axisValue)) {
+            seenCategories.add(axisValue);
+            categoryOrder.push(axisValue);
+            buckets[axisValue] = { name: axisValue, [axisKey]: axisValue };
           }
 
           if (series.measure === 'count') {
-            buckets[dimValue][series.id] = (buckets[dimValue][series.id] || 0) + 1;
+            buckets[axisValue][series.id] = (buckets[axisValue][series.id] || 0) + 1;
           } else if (series.measure === 'sum' && series.measureCol) {
             const val = parseNumber(row[series.measureCol]);
-            buckets[dimValue][series.id] = (buckets[dimValue][series.id] || 0) + val;
+            buckets[axisValue][series.id] = (buckets[axisValue][series.id] || 0) + val;
           } else if (series.measure === 'avg' && series.measureCol) {
-            if (!buckets[dimValue][`${series.id}_sum`]) {
-              buckets[dimValue][`${series.id}_sum`] = 0;
-              buckets[dimValue][`${series.id}_count`] = 0;
+            if (!buckets[axisValue][`${series.id}_sum`]) {
+              buckets[axisValue][`${series.id}_sum`] = 0;
+              buckets[axisValue][`${series.id}_count`] = 0;
             }
             const val = parseNumber(row[series.measureCol]);
-            buckets[dimValue][`${series.id}_sum`] += val;
-            buckets[dimValue][`${series.id}_count`] += 1;
+            buckets[axisValue][`${series.id}_sum`] += val;
+            buckets[axisValue][`${series.id}_count`] += 1;
           }
         });
       });
