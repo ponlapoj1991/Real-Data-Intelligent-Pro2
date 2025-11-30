@@ -235,6 +235,24 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
   // --- Data Processing for Widgets ---
 
+  // Sorting helper function (same as ChartBuilder)
+  const applySorting = (data: any[], order: string | undefined, valueKey: string) => {
+    const sortBy = order || 'value-desc';
+    switch (sortBy) {
+      case 'value-desc':
+        return [...data].sort((a, b) => (b[valueKey] || 0) - (a[valueKey] || 0));
+      case 'value-asc':
+        return [...data].sort((a, b) => (a[valueKey] || 0) - (b[valueKey] || 0));
+      case 'name-asc':
+        return [...data].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      case 'name-desc':
+        return [...data].sort((a, b) => String(b.name).localeCompare(String(a.name)));
+      case 'original':
+      default:
+        return data; // No sorting for timeline/date charts
+    }
+  };
+
   const processWidgetData = (widget: DashboardWidget) => {
       const widgetData = applyWidgetFilters(filteredData, widget.filters);
       // 1. TABLE WIDGET
@@ -274,7 +292,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
               }
           });
 
-          const result = Object.keys(groups).map(dim => {
+          let result = Object.keys(groups).map(dim => {
               const row: any = { name: dim };
               let total = 0;
               Object.keys(groups[dim]).forEach(stack => {
@@ -285,8 +303,8 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
               return row;
           });
 
-          // Sort by total desc
-          result.sort((a, b) => b.total - a.total);
+          // Apply sorting based on widget.sortBy
+          result = applySorting(result, widget.sortBy, 'total');
 
           const normalized = isPercentMode
             ? result.map(row => {
@@ -350,7 +368,13 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
             : groups[k]
       }));
 
-      result.sort((a, b) => b.value - a.value);
+      // Apply category filter BEFORE sorting and limiting
+      if (widget.categoryFilter && widget.categoryFilter.length > 0) {
+        result = result.filter(item => widget.categoryFilter!.includes(item.name));
+      }
+
+      // Apply sorting based on widget.sortBy
+      result = applySorting(result, widget.sortBy, 'value');
 
       if (widget.barMode === 'percent') {
           const total = result.reduce((acc, curr) => acc + (curr.value || 0), 0);
@@ -358,10 +382,11 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
               result = result.map(item => ({ ...item, value: (item.value / total) * 100 }));
           }
       }
-      
+
+      // Legacy limit support (use categoryFilter instead for new widgets)
       const limit = widget.limit || 20;
 
-      if (result.length > limit) {
+      if (!widget.categoryFilter && result.length > limit) {
           if (widget.type === 'wordcloud') {
                result = result.slice(0, limit); 
           } else {
