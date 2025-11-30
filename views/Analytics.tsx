@@ -511,7 +511,11 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       return [];
     }
 
-    const resolvedDimension = widget.dimension || widget.series.find(s => s.dimension)?.dimension || 'category';
+    const normalizedSeries = widget.series.map(s =>
+      s.measureCol && s.measure === 'count' ? { ...s, measure: 'sum' as const } : s
+    );
+
+    const resolvedDimension = widget.dimension || normalizedSeries.find(s => s.dimension)?.dimension || 'category';
     const axisKey = resolvedDimension;
     const result: Record<string, any> = {};
     const categoryOrder: string[] = [];
@@ -537,7 +541,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
     });
 
     // For each series
-    widget.series.forEach(s => {
+    normalizedSeries.forEach(s => {
       // Apply widget-level filters first
       let data = applyWidgetFilters(filteredData, widget.filters);
 
@@ -560,12 +564,14 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
           result[axisValue] = { name: axisValue, [axisKey]: axisValue };
         }
 
-        if (s.measure === 'count') {
+        const resolvedMeasure = s.measureCol && s.measure === 'count' ? 'sum' : s.measure;
+
+        if (resolvedMeasure === 'count') {
           result[axisValue][s.id] = (result[axisValue][s.id] || 0) + 1;
-        } else if (s.measure === 'sum' && s.measureCol) {
+        } else if (resolvedMeasure === 'sum' && s.measureCol) {
           const val = parseNumber(row[s.measureCol]);
           result[axisValue][s.id] = (result[axisValue][s.id] || 0) + val;
-        } else if (s.measure === 'avg' && s.measureCol) {
+        } else if (resolvedMeasure === 'avg' && s.measureCol) {
           if (!result[axisValue][`${s.id}_sum`]) {
             result[axisValue][`${s.id}_sum`] = 0;
             result[axisValue][`${s.id}_count`] = 0;
@@ -579,8 +585,9 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
     // Finalize averages
     Object.values(result).forEach(item => {
-      widget.series!.forEach(s => {
-        if (s.measure === 'avg') {
+      normalizedSeries.forEach(s => {
+        const resolvedMeasure = s.measureCol && s.measure === 'count' ? 'sum' : s.measure;
+        if (resolvedMeasure === 'avg') {
           const count = item[`${s.id}_count`] || 0;
           if (count > 0) {
             item[s.id] = item[`${s.id}_sum`] / count;
@@ -595,7 +602,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
     });
 
     // Sort and limit
-    const sorted = applySorting(Object.values(result), widget, widget.series!.map(s => s.id), categoryOrder);
+    const sorted = applySorting(Object.values(result), widget, normalizedSeries.map(s => s.id), categoryOrder);
     return sorted.slice(0, widget.limit || 20);
   };
 

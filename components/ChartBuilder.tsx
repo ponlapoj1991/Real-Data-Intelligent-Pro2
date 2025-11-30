@@ -247,6 +247,9 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
     dataLabels: base?.dataLabels || dataLabels,
   });
 
+  const resolveSeriesMeasure = (series: SeriesConfig) =>
+    series.measureCol && series.measure === 'count' ? 'sum' : series.measure;
+
   // Style state
   const [chartTitle, setChartTitle] = useState('');
   const [subtitle, setSubtitle] = useState('');
@@ -334,7 +337,17 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       setLeftYAxis(initialWidget.leftYAxis || leftYAxis);
       setRightYAxis(initialWidget.rightYAxis || rightYAxis);
       if (initialWidget.series && initialWidget.series.length > 0) {
-        setSeriesList(initialWidget.series);
+        const normalizedSeries = initialWidget.series.map(s =>
+          s.measureCol && s.measure === 'count' ? { ...s, measure: 'sum' as AggregateMethod } : s
+        );
+        setSeriesList(normalizedSeries);
+        const primary = normalizedSeries[0];
+        if (primary) {
+          setMeasure(resolveSeriesMeasure(primary));
+          if (primary.measureCol) {
+            setMeasureCol(primary.measureCol);
+          }
+        }
       } else {
         setSeriesList([
           createSeries(0, {
@@ -410,7 +423,10 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
 
   // Aggregate data for preview (multi-series aware)
   const previewData = useMemo(() => {
-    const resolvedDimension = dimension || seriesList.find(s => s.dimension)?.dimension;
+    const normalizedSeries = seriesList.map(s =>
+      s.measureCol && s.measure === 'count' ? { ...s, measure: 'sum' as AggregateMethod } : s
+    );
+    const resolvedDimension = dimension || normalizedSeries.find(s => s.dimension)?.dimension;
     if ((!resolvedDimension && seriesList.every(s => !s.dimension)) || data.length === 0) return [];
 
     const axisKey = resolvedDimension || 'category';
@@ -424,7 +440,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       return isNaN(num) ? 0 : num;
     };
 
-    if (seriesList.length > 0) {
+    if (normalizedSeries.length > 0) {
       const buckets: Record<string, any> = {};
       const categoryOrder: string[] = [];
       const seenCategories = new Set<string>();
@@ -439,7 +455,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
         }
       });
 
-      seriesList.forEach(series => {
+      normalizedSeries.forEach(series => {
         const seriesDimension = series.dimension || resolvedDimension;
         if (!seriesDimension) return;
         data.forEach(row => {
@@ -452,12 +468,13 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
             buckets[axisValue] = { name: axisValue, [axisKey]: axisValue };
           }
 
-          if (series.measure === 'count') {
+          const resolvedMeasure = resolveSeriesMeasure(series);
+          if (resolvedMeasure === 'count') {
             buckets[axisValue][series.id] = (buckets[axisValue][series.id] || 0) + 1;
-          } else if (series.measure === 'sum' && series.measureCol) {
+          } else if (resolvedMeasure === 'sum' && series.measureCol) {
             const val = parseNumber(row[series.measureCol]);
             buckets[axisValue][series.id] = (buckets[axisValue][series.id] || 0) + val;
-          } else if (series.measure === 'avg' && series.measureCol) {
+          } else if (resolvedMeasure === 'avg' && series.measureCol) {
             if (!buckets[axisValue][`${series.id}_sum`]) {
               buckets[axisValue][`${series.id}_sum`] = 0;
               buckets[axisValue][`${series.id}_count`] = 0;
@@ -470,8 +487,9 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       });
 
       Object.values(buckets).forEach((bucket: any) => {
-        seriesList.forEach(series => {
-          if (series.measure === 'avg') {
+        normalizedSeries.forEach(series => {
+          const resolvedMeasure = resolveSeriesMeasure(series);
+          if (resolvedMeasure === 'avg') {
             const count = bucket[`${series.id}_count`] || 0;
             if (count > 0) {
               bucket[series.id] = bucket[`${series.id}_sum`] / count;
@@ -485,7 +503,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
         });
       });
 
-      const sorted = applySorting(Object.values(buckets), seriesList.map(s => s.id), categoryOrder);
+      const sorted = applySorting(Object.values(buckets), normalizedSeries.map(s => s.id), categoryOrder);
       return sorted.slice(0, limit);
     }
 
@@ -561,7 +579,9 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   };
 
   const handleSave = () => {
-    const normalizedSeries = seriesList.length > 0 ? seriesList : [createSeries(0)];
+    const normalizedSeries = (seriesList.length > 0 ? seriesList : [createSeries(0)]).map(s =>
+      s.measureCol && s.measure === 'count' ? { ...s, measure: 'sum' as AggregateMethod } : s
+    );
     const widgetDimension = dimension || normalizedSeries.find(s => s.dimension)?.dimension;
     if (!widgetDimension) {
       alert('Please select a dimension for the X-axis (or per-series dimension).');
@@ -941,9 +961,17 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                                     value={series.measureCol || ''}
                                     onChange={(e) => {
                                       const next = [...seriesList];
-                                      next[idx] = { ...series, measureCol: e.target.value };
+                                      const updatedSeries: SeriesConfig = {
+                                        ...series,
+                                        measureCol: e.target.value,
+                                        measure: series.measure === 'count' && e.target.value ? 'sum' : series.measure,
+                                      };
+                                      next[idx] = updatedSeries;
                                       setSeriesList(next);
-                                      if (idx === 0) setMeasureCol(e.target.value);
+                                      if (idx === 0) {
+                                        setMeasure(updatedSeries.measure);
+                                        setMeasureCol(e.target.value);
+                                      }
                                     }}
                                     disabled={series.measure === 'count'}
                                     className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm disabled:bg-gray-100"
