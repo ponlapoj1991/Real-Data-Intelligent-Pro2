@@ -10,7 +10,27 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, Save, ChevronDown, ChevronUp, Palette, Type as TypeIcon, Sliders as SlidersIcon, Sparkles, Copy, Wand2, Layers, MousePointer2, Settings2 } from 'lucide-react';
+import {
+  X,
+  Save,
+  ChevronDown,
+  ChevronUp,
+  Palette,
+  Type as TypeIcon,
+  Sliders as SlidersIcon,
+  Sparkles,
+  Copy,
+  Wand2,
+  Layers,
+  MousePointer2,
+  Settings2,
+  BarChart3,
+  LineChart,
+  PieChart,
+  AreaChart,
+  ScatterChart,
+  Blocks
+} from 'lucide-react';
 import {
   ChartType,
   DashboardWidget,
@@ -129,6 +149,17 @@ const chartTemplates = [
   }
 ];
 
+const chartChoices: { id: ChartType; label: string; description: string; icon: React.ReactNode }[] = [
+  { id: 'bar', label: 'Bar', description: 'Compare categories', icon: <BarChart3 className="w-5 h-5 text-blue-600" /> },
+  { id: 'line', label: 'Line', description: 'Trends over time', icon: <LineChart className="w-5 h-5 text-blue-600" /> },
+  { id: 'area', label: 'Area', description: 'Cumulative trends', icon: <AreaChart className="w-5 h-5 text-blue-600" /> },
+  { id: 'combo', label: 'Combo', description: 'Bar + Line mix', icon: <Layers className="w-5 h-5 text-blue-600" /> },
+  { id: 'stacked', label: 'Stacked', description: 'Breakdown per category', icon: <Blocks className="w-5 h-5 text-blue-600" /> },
+  { id: 'pie', label: 'Pie', description: 'Share of total', icon: <PieChart className="w-5 h-5 text-blue-600" /> },
+  { id: 'scatter', label: 'Scatter', description: 'Correlations', icon: <ScatterChart className="w-5 h-5 text-blue-600" /> },
+  { id: 'kpi', label: 'KPI', description: 'Single metric', icon: <TypeIcon className="w-5 h-5 text-blue-600" /> },
+];
+
 // Collapsible Section
 const Section: React.FC<{
   title: string;
@@ -242,6 +273,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   // Widget state
   const [title, setTitle] = useState('New Chart');
   const [type, setType] = useState<ChartType>('bar');
+  const [stackDimension, setStackDimension] = useState('');
   const [dimension, setDimension] = useState('');
   const [measure, setMeasure] = useState<AggregateMethod>('count');
   const [measureCol, setMeasureCol] = useState('');
@@ -252,6 +284,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   const [customSortInput, setCustomSortInput] = useState('');
   const [categoryConfig, setCategoryConfig] = useState<Record<string, CategoryConfig>>({});
   const [templateId, setTemplateId] = useState<string>('');
+  const [showChartPicker, setShowChartPicker] = useState(!initialWidget);
   const [interaction, setInteraction] = useState<InteractionConfig>({ enableBrush: true, enableCrosshair: true, quickRanges: [10] });
   const defaultStyle: StyleConfig = { lineWidth: 2, markerSize: 4, barRadius: 4, palette: COLORS, smoothLines: true, background: '#ffffff', areaOpacity: 0.3, cardRadius: 12, showShadow: false, scatterShape: 'circle' };
   const [styleConfig, setStyleConfig] = useState<StyleConfig>(defaultStyle);
@@ -336,6 +369,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
     }
 
     if (nextType === 'stacked') {
+      setStackDimension(dimension);
       setSeriesList(prev => (prev.length > 0 ? prev : [createSeries(0)]).map(s => ({ ...s, type: 'bar' })));
       return;
     }
@@ -354,6 +388,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       setTitle(initialWidget.title);
       setType(initialWidget.type);
       setDimension(initialWidget.dimension);
+      setStackDimension(initialWidget.stackBy || '');
       const baseMeasure = initialWidget.measure || 'count';
       setMeasure(baseMeasure);
       setMeasureCol(initialWidget.measureCol || '');
@@ -370,6 +405,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       setXAxis(initialWidget.xAxis || xAxis);
       setLeftYAxis(initialWidget.leftYAxis || leftYAxis);
       setRightYAxis(initialWidget.rightYAxis || rightYAxis);
+      setShowChartPicker(false);
       if (initialWidget.series && initialWidget.series.length > 0) {
         const normalizedSeries = initialWidget.series.map(s =>
           s.measureCol && s.measure === 'count' ? { ...s, measure: 'sum' as AggregateMethod } : s
@@ -403,6 +439,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
     } else {
       if (availableColumns.length > 0) {
         setDimension(availableColumns[0]);
+        setStackDimension(availableColumns[0]);
       }
       setStyleConfig(defaultStyle);
       setSeriesList([createSeries(0)]);
@@ -469,13 +506,45 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
     });
   };
 
+  const isStackedType = type === 'stacked';
+
+  const stackedSeries = useMemo(() => {
+    if (!isStackedType || !stackDimension) return [] as SeriesConfig[];
+    const seen = new Set<string>();
+    const stackValues: string[] = [];
+    data.forEach(row => {
+      const val = String(row[stackDimension] ?? 'N/A');
+      if (!seen.has(val)) {
+        seen.add(val);
+        stackValues.push(val);
+      }
+    });
+    return stackValues.slice(0, 12).map((val, idx) => ({
+      id: `stack-${idx}`,
+      label: val,
+      type: 'bar' as const,
+      measure: measureCol ? 'sum' : measure,
+      measureCol: measureCol || undefined,
+      dimension,
+      yAxis: 'left' as const,
+      color: palette[idx % palette.length],
+    }));
+  }, [data, dimension, isStackedType, measure, measureCol, palette, stackDimension]);
+
+  const seriesForPreview = useMemo(() => {
+    if (isStackedType && stackDimension) {
+      return stackedSeries.length > 0 ? stackedSeries : seriesList;
+    }
+    return seriesList;
+  }, [isStackedType, seriesList, stackDimension, stackedSeries]);
+
   // Aggregate data for preview (multi-series aware)
   const previewData = useMemo(() => {
-    const normalizedSeries = seriesList.map(s =>
+    const normalizedSeries = seriesForPreview.map(s =>
       s.measureCol && s.measure === 'count' ? { ...s, measure: 'sum' as AggregateMethod } : s
     );
     const resolvedDimension = dimension || normalizedSeries.find(s => s.dimension)?.dimension;
-    if ((!resolvedDimension && seriesList.every(s => !s.dimension)) || data.length === 0) return [];
+    if ((!resolvedDimension && seriesForPreview.every(s => !s.dimension)) || data.length === 0) return [];
 
     const axisKey = resolvedDimension || 'category';
     const parseNumber = (val: any) => {
@@ -509,6 +578,11 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
         data.forEach(row => {
           const dimValue = String(row[seriesDimension] ?? 'N/A');
           const axisValue = String(row[resolvedDimension || seriesDimension] ?? dimValue);
+
+          if (isStackedType && stackDimension) {
+            const stackKey = String(row[stackDimension] ?? 'N/A');
+            if (stackKey !== series.label) return;
+          }
 
           if (!seenCategories.has(axisValue)) {
             seenCategories.add(axisValue);
@@ -627,7 +701,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   };
 
   const handleSave = () => {
-    const normalizedSeries = (seriesList.length > 0 ? seriesList : [createSeries(0)]).map(s =>
+    const normalizedSeries = (seriesForPreview.length > 0 ? seriesForPreview : [createSeries(0)]).map(s =>
       s.measureCol && s.measure === 'count' ? { ...s, measure: 'sum' as AggregateMethod } : s
     );
     const widgetDimension = dimension || normalizedSeries.find(s => s.dimension)?.dimension;
@@ -663,6 +737,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       measure: primarySeries?.measure || measure,
       measureCol: primarySeries?.measureCol || measureCol || undefined,
       series: hydratedSeries,
+      stackBy: isStackedType ? stackDimension : undefined,
       limit,
       width,
       templateId,
@@ -747,6 +822,38 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
           </button>
         </div>
 
+        {showChartPicker && (
+          <div className="px-6 py-5 border-b bg-white">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Layers className="w-4 h-4 text-blue-600" />
+                <span className="font-semibold text-gray-900 text-sm">Choose a chart style to start</span>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {chartChoices.map(choice => (
+                <button
+                  key={choice.id}
+                  onClick={() => {
+                    handleTypeChange(choice.id);
+                    setShowChartPicker(false);
+                  }}
+                  className={`border rounded-lg p-3 text-left hover:border-blue-500 hover:shadow-sm transition bg-gray-50 ${type === choice.id ? 'border-blue-500 shadow' : 'border-gray-200'}`}
+                  style={{ outline: 'none' }}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                      {choice.icon}
+                      {choice.label}
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-500 leading-snug">{choice.description}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Templates & Wizard */}
         <div className="px-6 pt-4 pb-2 border-b border-gray-200 bg-white">
           <div className="flex flex-col gap-4">
@@ -807,7 +914,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                     {type === 'pie' ? (
                       <PieChart>
                         <Pie
-                          data={(seriesList.length > 0 ? previewData.map(d => ({ name: (d as any).name, value: d[seriesList[0].id] || 0 })) : previewData) as any[]}
+                          data={(seriesForPreview.length > 0 ? previewData.map(d => ({ name: (d as any).name, value: d[seriesForPreview[0].id] || 0 })) : previewData) as any[]}
                           dataKey="value"
                           nameKey="name"
                           cx="50%"
@@ -841,7 +948,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                         />
                         <Tooltip />
                         {legend.enabled && <RechartsLegend />}
-                        {(seriesList.length > 0 ? seriesList : [{ id: 'value', label: 'Series 1', type: 'scatter' as const, color: palette[0], yAxis: 'left' as const }]).map((series, idx) => (
+                        {(seriesForPreview.length > 0 ? seriesForPreview : [{ id: 'value', label: 'Series 1', type: 'scatter' as const, color: palette[0], yAxis: 'left' as const }]).map((series, idx) => (
                           <Scatter
                             key={series.id}
                             dataKey={series.id}
@@ -889,8 +996,8 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                         )}
                         <Tooltip />
                         {legend.enabled && <RechartsLegend />}
-                        {(seriesList.length > 0
-                          ? seriesList
+                        {(seriesForPreview.length > 0
+                          ? seriesForPreview
                           : [{ id: 'value', label: 'Values', type: type === 'line' ? 'line' : type === 'area' ? 'area' : type === 'scatter' ? 'scatter' : 'bar', color: palette[0], yAxis: 'left' as const }]
                         ).map((series, idx) => {
                           const Component = series.type === 'line' ? Line : series.type === 'area' ? Area : series.type === 'scatter' ? Scatter : Bar;
@@ -1014,6 +1121,24 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                     </select>
                   </div>
 
+                  {isStackedType && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Stack field (segments)</label>
+                      <select
+                        value={stackDimension}
+                        onChange={(e) => setStackDimension(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                        style={{ outline: 'none' }}
+                      >
+                        <option value="">Select...</option>
+                        {availableColumns.map(col => (
+                          <option key={col} value={col}>{col}</option>
+                        ))}
+                      </select>
+                      <p className="text-[11px] text-gray-500 mt-1">We build one bar segment per value in this column (e.g. sentiment).</p>
+                    </div>
+                  )}
+
                   <div className="border border-gray-200 rounded-lg p-3 bg-gray-50">
                     <div className="flex items-center justify-between mb-3">
                       <div>
@@ -1022,7 +1147,8 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                       </div>
                       <button
                         onClick={() => setSeriesList([...seriesList, createSeries(seriesList.length)])}
-                        className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700"
+                        disabled={isStackedType}
+                        className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         Add series
                       </button>

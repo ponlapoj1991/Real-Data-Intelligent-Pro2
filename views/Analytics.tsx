@@ -544,6 +544,9 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       return isNaN(num) ? 0 : num;
     };
 
+    const stackBy = widget.type === 'stacked' ? widget.stackBy : undefined;
+    const basePalette = widget.style?.palette || getPalette(widget);
+
     // Seed category order from the shared dimension to keep combo axes aligned
     applyWidgetFilters(filteredData, widget.filters).forEach(row => {
       const baseKey = String(row[resolvedDimension] ?? 'N/A');
@@ -554,8 +557,31 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       }
     });
 
+    const stackSeries = (() => {
+      if (!stackBy) return null;
+      const values: string[] = [];
+      const seen = new Set<string>();
+      applyWidgetFilters(filteredData, widget.filters).forEach(row => {
+        const v = String(row[stackBy] ?? 'N/A');
+        if (!seen.has(v)) {
+          seen.add(v);
+          values.push(v);
+        }
+      });
+      const base = normalizedSeries[0];
+      return values.slice(0, 12).map((val, idx) => ({
+        ...base,
+        id: `stack-${idx}`,
+        label: val,
+        type: 'bar' as const,
+        color: basePalette[idx % basePalette.length],
+      }));
+    })();
+
+    const workingSeries = stackSeries || normalizedSeries;
+
     // For each series
-    normalizedSeries.forEach(s => {
+    workingSeries.forEach(s => {
       // Apply widget-level filters first
       let data = applyWidgetFilters(filteredData, widget.filters);
 
@@ -580,6 +606,26 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
         const resolvedMeasure = s.measureCol && s.measure === 'count' ? 'sum' : s.measure;
 
+        if (stackBy) {
+          const stackKey = String(row[stackBy] ?? 'N/A');
+          if (stackSeries && stackKey !== s.label) return;
+          if (resolvedMeasure === 'count') {
+            result[axisValue][s.id] = (result[axisValue][s.id] || 0) + 1;
+          } else if (resolvedMeasure === 'sum' && s.measureCol) {
+            const val = parseNumber(row[s.measureCol]);
+            result[axisValue][s.id] = (result[axisValue][s.id] || 0) + val;
+          } else if (resolvedMeasure === 'avg' && s.measureCol) {
+            if (!result[axisValue][`${s.id}_sum`]) {
+              result[axisValue][`${s.id}_sum`] = 0;
+              result[axisValue][`${s.id}_count`] = 0;
+            }
+            const val = parseNumber(row[s.measureCol]);
+            result[axisValue][`${s.id}_sum`] += val;
+            result[axisValue][`${s.id}_count`] += 1;
+          }
+          return;
+        }
+
         if (resolvedMeasure === 'count') {
           result[axisValue][s.id] = (result[axisValue][s.id] || 0) + 1;
         } else if (resolvedMeasure === 'sum' && s.measureCol) {
@@ -599,7 +645,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
     // Finalize averages
     Object.values(result).forEach(item => {
-      normalizedSeries.forEach(s => {
+      workingSeries.forEach(s => {
         const resolvedMeasure = s.measureCol && s.measure === 'count' ? 'sum' : s.measure;
         if (resolvedMeasure === 'avg') {
           const count = item[`${s.id}_count`] || 0;
@@ -616,7 +662,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
     });
 
     // Sort and limit
-    const sorted = applySorting(Object.values(result), widget, normalizedSeries.map(s => s.id), categoryOrder);
+    const sorted = applySorting(Object.values(result), widget, workingSeries.map(s => s.id), categoryOrder);
     return sorted.slice(0, widget.limit || 20);
   };
 
