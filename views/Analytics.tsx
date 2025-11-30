@@ -495,6 +495,21 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
         break;
     }
 
+    // Normalize to 100% for stacked bar
+    if (widget.type === 'stacked-bar') {
+      sorted = sorted.map(row => {
+        const total = widget.series!.reduce((sum, s) => sum + (row[s.id] || 0), 0);
+        if (total > 0) {
+          const normalized: any = { [widget.dimension]: row[widget.dimension] };
+          widget.series!.forEach(s => {
+            normalized[s.id] = ((row[s.id] || 0) / total) * 100;
+          });
+          return normalized;
+        }
+        return row;
+      });
+    }
+
     return sorted;
   };
 
@@ -615,6 +630,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
                 {widget.series.map((s, idx) => {
                   const Component = s.type === 'line' ? Line : s.type === 'area' ? Area : Bar;
+                  const barProps = s.type === 'bar' && widget.type === 'stacked-bar' ? { stackId: 'stack' } : {};
                   return (
                     <Component
                       key={s.id}
@@ -628,6 +644,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                       strokeWidth={s.type === 'line' ? 2 : 0}
                       onClick={(barData: any) => handleChartClick(null, widget, barData[widget.dimension])}
                       className="cursor-pointer"
+                      {...barProps}
                     >
                       {dataLabelsConfig.enabled && (
                         <LabelList

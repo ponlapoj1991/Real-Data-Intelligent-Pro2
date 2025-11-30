@@ -457,8 +457,8 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   const previewData = useMemo(() => {
     if (!dimension || data.length === 0) return [];
 
-    // For multi-series (Combo chart)
-    if (type === 'combo' && series.length > 0) {
+    // For multi-series (Combo chart & Stacked bar)
+    if ((type === 'combo' || type === 'stacked-bar') && series.length > 0) {
       const groups: Record<string, any> = {};
 
       data.forEach(row => {
@@ -508,6 +508,21 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
 
       // Apply sorting
       result = applySorting(result, sortBy, series.length > 0 ? series[0].id : 'value');
+
+      // Normalize to 100% for stacked bar
+      if (type === 'stacked-bar') {
+        result = result.map(row => {
+          const total = series.reduce((sum, s) => sum + (row[s.id] || 0), 0);
+          if (total > 0) {
+            const normalized: any = { name: row.name };
+            series.forEach(s => {
+              normalized[s.id] = ((row[s.id] || 0) / total) * 100;
+            });
+            return normalized;
+          }
+          return row;
+        });
+      }
 
       return result;
     }
@@ -720,7 +735,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                         {legend.enabled && <RechartsLegend />}
                         <Tooltip />
                       </PieChart>
-                    ) : isComboChart && series.length > 0 ? (
+                    ) : isMultiSeriesChart && series.length > 0 ? (
                       <ComposedChart data={previewData} layout={barOrientation === 'horizontal' ? 'vertical' : 'horizontal'}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                         {barOrientation === 'vertical' ? (
@@ -782,6 +797,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                                 name={s.label}
                                 fill={s.color}
                                 yAxisId={barOrientation === 'vertical' ? s.yAxis : undefined}
+                                stackId={type === 'stacked-bar' ? 'stack' : undefined}
                                 style={{ outline: 'none' }}
                               />
                             );
@@ -1001,8 +1017,8 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                     </select>
                   </div>
 
-                  {/* Series Management for Combo Chart */}
-                  {isComboChart && (
+                  {/* Series Management for Multi-Series Charts */}
+                  {isMultiSeriesChart && (
                     <div>
                       <div className="flex items-center justify-between mb-2">
                         <label className="block text-sm font-medium text-gray-700">
@@ -1061,8 +1077,8 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                     </div>
                   )}
 
-                  {/* Single Series Config (for non-combo charts) */}
-                  {!isComboChart && (
+                  {/* Single Series Config (for non-multi-series charts) */}
+                  {!isMultiSeriesChart && (
                     <div className="space-y-3">
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">Measure</label>
@@ -1115,7 +1131,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                   </div>
 
                   {/* Bar Orientation */}
-                  {(type === 'bar' || isComboChart) && (
+                  {(type === 'bar' || isMultiSeriesChart) && (
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">Bar Orientation</label>
                       <div className="flex gap-4">
