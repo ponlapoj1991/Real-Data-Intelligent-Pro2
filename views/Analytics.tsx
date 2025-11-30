@@ -489,11 +489,11 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
   // --- Multi-Series Data Processing (Google Sheets Style) ---
   const processMultiSeriesData = (widget: DashboardWidget) => {
-    if (!widget.series || widget.series.length === 0 || (!widget.dimension && widget.series.every(s => !s.dimension))) {
+    if (!widget.series || widget.series.length === 0) {
       return [];
     }
 
-    const axisKey = widget.dimension || 'category';
+    const axisKey = widget.dimension || widget.series.find(s => s.dimension)?.dimension || 'category';
     const result: Record<string, any> = {};
     const categoryOrder: string[] = [];
     const parseNumber = (val: any) => {
@@ -571,18 +571,19 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
   const renderWidget = (widget: DashboardWidget) => {
       try {
         // Validation: Ensure widget has required fields
-        if (!widget.dimension && widget.type !== 'kpi') {
+        const resolvedDimension = widget.dimension || widget.series?.find(s => s.dimension)?.dimension;
+        if (!resolvedDimension && widget.type !== 'kpi') {
           return <div className="flex items-center justify-center h-full text-gray-400 text-sm">Invalid widget: Missing dimension</div>;
         }
 
         // NEW: Multi-Series Chart Rendering (Google Sheets Style)
       if (widget.series && widget.series.length > 0 && widget.type !== 'pie' && widget.type !== 'kpi' && widget.type !== 'wordcloud' && widget.type !== 'table') {
-        const rawData = processMultiSeriesData(widget);
+        const rawData = processMultiSeriesData({ ...widget, dimension: resolvedDimension || widget.dimension });
         const data = applyRangeToData(widget.id, rawData);
         if (!data || data.length === 0) return <div className="flex items-center justify-center h-full text-gray-400 text-sm">No Data</div>;
 
         const hasRightAxis = widget.series.some(s => s.yAxis === 'right');
-        const axisKey = widget.dimension || 'category';
+        const axisKey = resolvedDimension || widget.dimension || widget.series[0]?.dimension || 'category';
         const legendConfig = widget.legend || { enabled: true, position: 'bottom', fontSize: 11, fontColor: '#666666', alignment: 'center' };
         const xAxisConfig = widget.xAxis || { fontSize: 11, fontColor: '#666666', slant: 0, showGridlines: true };
         const leftYAxisConfig = widget.leftYAxis || { fontSize: 11, fontColor: '#666666', min: 'auto', max: 'auto', format: '#,##0', showGridlines: true };

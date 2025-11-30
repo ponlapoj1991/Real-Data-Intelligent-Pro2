@@ -563,7 +563,13 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       customOrder: sortConfig.mode === 'custom' ? parseCustomOrder(customSortInput) : undefined,
     };
 
-    const primarySeries = normalizedSeries[0];
+    // Ensure every series carries the resolved dimension so the dashboard renderer has a stable X key
+    const hydratedSeries = normalizedSeries.map(series => ({
+      ...series,
+      dimension: series.dimension || widgetDimension
+    }));
+
+    const primarySeries = hydratedSeries[0];
     const widget: DashboardWidget = {
       id: initialWidget?.id || generateId(),
       title,
@@ -571,7 +577,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       dimension: widgetDimension,
       measure: primarySeries?.measure || measure,
       measureCol: primarySeries?.measureCol || measureCol || undefined,
-      series: normalizedSeries,
+      series: hydratedSeries,
       limit,
       width,
       templateId,
