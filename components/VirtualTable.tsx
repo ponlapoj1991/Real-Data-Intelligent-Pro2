@@ -38,16 +38,24 @@ const VirtualTable: React.FC<VirtualTableProps> = ({
   renderCell,
   emptyMessage = 'No data available'
 }) => {
+  const MIN_COLUMN_WIDTH = 150;
+  const ROW_INDEX_WIDTH = 48; // Tailwind w-12
+
   // Filter visible columns
   const visibleColumns = useMemo(() => {
     return columns.filter(col => col.visible !== false);
   }, [columns]);
 
   // Column width calculation (equal width for simplicity)
-  const columnWidth = useMemo(() => {
+  const columnWidthPercent = useMemo(() => {
     if (visibleColumns.length === 0) return 100;
-    return Math.max(150, Math.floor(100 / visibleColumns.length));
+    return 100 / visibleColumns.length;
   }, [visibleColumns]);
+
+  // Ensure the table can expand horizontally when there are many columns
+  const minTableWidth = useMemo(() => {
+    return ROW_INDEX_WIDTH + visibleColumns.length * MIN_COLUMN_WIDTH;
+  }, [visibleColumns.length]);
 
   // Default cell renderer
   const defaultRenderCell = (row: RawRow, column: ColumnConfig, rowIndex: number) => {
@@ -89,7 +97,7 @@ const VirtualTable: React.FC<VirtualTableProps> = ({
 
     return (
       <div
-        style={style}
+        style={{ ...style, minWidth: minTableWidth }}
         className={`flex border-b border-gray-100 cursor-pointer hover:bg-blue-50 transition-colors ${
           isSelected ? 'bg-blue-100' : 'bg-white'
         }`}
@@ -104,11 +112,11 @@ const VirtualTable: React.FC<VirtualTableProps> = ({
         </div>
 
         {/* Cells */}
-        {visibleColumns.map((column, colIndex) => (
+        {visibleColumns.map((column) => (
           <div
             key={column.key}
             className="flex-shrink-0 px-3 flex items-center text-sm border-r border-gray-100 overflow-hidden"
-            style={{ width: `${columnWidth}%` }}
+            style={{ flexBasis: `${columnWidthPercent}%`, minWidth: MIN_COLUMN_WIDTH }}
           >
             {cellRenderer(row, column, index)}
           </div>
@@ -129,34 +137,36 @@ const VirtualTable: React.FC<VirtualTableProps> = ({
   }
 
   return (
-    <div className="border border-gray-200 rounded-lg overflow-hidden bg-white">
-      {/* Header */}
-      <div className="flex bg-gray-50 border-b border-gray-200 font-semibold text-sm text-gray-700 sticky top-0 z-10">
-        <div className="flex-shrink-0 w-12 flex items-center justify-center border-r border-gray-200">
-          #
-        </div>
-        {visibleColumns.map(column => (
-          <div
-            key={column.key}
-            className="flex-shrink-0 px-3 py-2 border-r border-gray-200 truncate"
-            style={{ width: `${columnWidth}%` }}
-            title={column.label || column.key}
-          >
-            {column.label || column.key}
+    <div className="border border-gray-200 rounded-lg overflow-auto bg-white">
+      <div style={{ minWidth: minTableWidth }}>
+        {/* Header */}
+        <div className="flex bg-gray-50 border-b border-gray-200 font-semibold text-sm text-gray-700 sticky top-0 z-10">
+          <div className="flex-shrink-0 w-12 flex items-center justify-center border-r border-gray-200">
+            #
           </div>
-        ))}
-      </div>
+          {visibleColumns.map(column => (
+            <div
+              key={column.key}
+              className="flex-shrink-0 px-3 py-2 border-r border-gray-200 truncate"
+              style={{ flexBasis: `${columnWidthPercent}%`, minWidth: MIN_COLUMN_WIDTH }}
+              title={column.label || column.key}
+            >
+              {column.label || column.key}
+            </div>
+          ))}
+        </div>
 
-      {/* Virtual List */}
-      <List
-        height={height}
-        itemCount={data.length}
-        itemSize={rowHeight}
-        width="100%"
-        overscanCount={5}
-      >
-        {Row}
-      </List>
+        {/* Virtual List */}
+        <List
+          height={height}
+          itemCount={data.length}
+          itemSize={rowHeight}
+          width="100%"
+          overscanCount={5}
+        >
+          {Row}
+        </List>
+      </div>
 
       {/* Footer Stats */}
       <div className="bg-gray-50 border-t border-gray-200 px-4 py-2 text-xs text-gray-600">

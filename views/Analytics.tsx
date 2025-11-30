@@ -2,17 +2,41 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Project, DashboardWidget, DashboardFilter, DrillDownState, RawRow } from '../types';
 import {
-    PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, AreaChart, Area, LabelList, ComposedChart, Legend as RechartsLegend
+    PieChart,
+    Pie,
+    Cell,
+    BarChart,
+    Bar,
+    XAxis,
+    YAxis,
+    CartesianGrid,
+    Tooltip,
+    Legend,
+    ResponsiveContainer,
+    LineChart,
+    Line,
+    AreaChart,
+    Area,
+    LabelList,
+    ComposedChart,
+    Legend as RechartsLegend,
+    Brush
 } from 'recharts';
-import { Bot, Loader2, Plus, LayoutGrid, Trash2, Pencil, Filter, X, Presentation, FileOutput, Eye, EyeOff, Table, Download, ChevronRight, MousePointer2 } from 'lucide-react';
-import { analyzeProjectData, DataSummary } from '../utils/ai';
+import { Loader2, Plus, LayoutGrid, Trash2, Pencil, Filter, X, Presentation, FileOutput, Eye, EyeOff, Table, Download, ChevronRight, MousePointer2 } from 'lucide-react';
 import { applyTransformation } from '../utils/transform';
 import { saveProject } from '../utils/storage-compat';
 import { generatePowerPoint } from '../utils/report';
 import { exportToExcel } from '../utils/excel';
 import ChartBuilder from '../components/ChartBuilder';
 import EmptyState from '../components/EmptyState';
-import Skeleton from '../components/Skeleton';
+
+interface SavedView {
+  id: string;
+  name: string;
+  widgets: DashboardWidget[];
+  filters: DashboardFilter[];
+  createdAt: number;
+}
 
 interface AnalyticsProps {
   project: Project;
@@ -50,9 +74,6 @@ const formatWidgetValue = (widget: DashboardWidget, val: number) => {
 };
 
 const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
-
   // Dashboard State
   const [widgets, setWidgets] = useState<DashboardWidget[]>(project.dashboard || []);
   const [isBuilderOpen, setIsBuilderOpen] = useState(false);
@@ -64,6 +85,9 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
   const [interactionMode, setInteractionMode] = useState<'drill' | 'filter'>('filter');
   const [isExporting, setIsExporting] = useState(false);
   const [newFilterCol, setNewFilterCol] = useState('');
+  const [savedViews, setSavedViews] = useState<SavedView[]>([]);
+  const [comparisonLayout, setComparisonLayout] = useState<'balanced' | 'dense'>('balanced');
+  const [widgetRanges, setWidgetRanges] = useState<Record<string, { start: number; end: number }>>({});
   
   // Phase 4: Drill Down
   const [drillDown, setDrillDown] = useState<DrillDownState | null>(null);
@@ -76,6 +100,17 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
           setWidgets(project.dashboard);
       }
   }, [project.dashboard]);
+
+  useEffect(() => {
+    const stored = localStorage.getItem('analytics-saved-views');
+    if (stored) {
+      try {
+        setSavedViews(JSON.parse(stored));
+      } catch (e) {
+        setSavedViews([]);
+      }
+    }
+  }, []);
 
   // 1. Prepare Base Data (Raw or Structured)
   const baseData = useMemo(() => {
@@ -111,6 +146,57 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       }));
   };
 
+  const applySorting = (rows: any[], widget: DashboardWidget, valueKeys: string[], categoryOrder: string[] = []) => {
+    const sort = widget.sort;
+    if (sort?.persistedOrder && sort.persistedOrder.length > 0) {
+      const order = sort.persistedOrder;
+      return [...rows].sort((a, b) => {
+        const aIdx = order.indexOf(a.name);
+        const bIdx = order.indexOf(b.name);
+        if (aIdx === -1 && bIdx === -1) {
+          return categoryOrder.indexOf(a.name) - categoryOrder.indexOf(b.name);
+        }
+        if (aIdx === -1) return 1;
+        if (bIdx === -1) return -1;
+        return aIdx - bIdx;
+      });
+    }
+
+    if (!sort || sort.mode === 'none') {
+      if (categoryOrder.length === 0) return rows;
+      return [...rows].sort((a, b) => categoryOrder.indexOf(a.name) - categoryOrder.indexOf(b.name));
+    }
+
+    if (sort.mode === 'custom' && sort.customOrder && sort.customOrder.length > 0) {
+      return [...rows].sort((a, b) => {
+        const aIdx = sort.customOrder!.indexOf(a.name);
+        const bIdx = sort.customOrder!.indexOf(b.name);
+        if (aIdx === -1 && bIdx === -1) {
+          return categoryOrder.indexOf(a.name) - categoryOrder.indexOf(b.name);
+        }
+        if (aIdx === -1) return 1;
+        if (bIdx === -1) return -1;
+        return aIdx - bIdx;
+      });
+    }
+
+    const direction = sort.mode === 'asc' ? 1 : -1;
+    const key = sort.key || 'total';
+    const valueOf = (row: any) => {
+      if (key === 'dimension') return String(row.name || '');
+      return valueKeys.reduce((sum, k) => sum + (Number(row[k]) || 0), 0);
+    };
+
+    return [...rows].sort((a, b) => {
+      const aVal = valueOf(a);
+      const bVal = valueOf(b);
+      if (typeof aVal === 'string' || typeof bVal === 'string') {
+        return String(aVal).localeCompare(String(bVal)) * direction;
+      }
+      return (aVal as number - (bVal as number)) * direction;
+    });
+  };
+
   // --- Filter Logic ---
 
   const addFilter = (column: string, value: string = '') => {
@@ -142,6 +228,56 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
   const getUniqueValues = (col: string) => {
       const unique = new Set(baseData.map(row => String(row[col] || '')));
       return Array.from(unique).filter(Boolean).sort().slice(0, 100); // Limit dropdown size
+  };
+
+  const persistSavedViews = (views: SavedView[]) => {
+    setSavedViews(views);
+    localStorage.setItem('analytics-saved-views', JSON.stringify(views));
+  };
+
+  const handleSaveViewConfig = () => {
+    const name = window.prompt('Name this saved view');
+    if (!name) return;
+    const newView: SavedView = {
+      id: crypto.randomUUID(),
+      name,
+      widgets,
+      filters,
+      createdAt: Date.now(),
+    };
+    persistSavedViews([...savedViews, newView]);
+  };
+
+  const applySavedView = (id: string) => {
+    const view = savedViews.find(v => v.id === id);
+    if (!view) return;
+    setWidgets(view.widgets);
+    setFilters(view.filters || []);
+  };
+
+  const deleteSavedView = (id: string) => {
+    const next = savedViews.filter(v => v.id !== id);
+    persistSavedViews(next);
+  };
+
+  const updateRange = (widgetId: string, start: number, end: number) => {
+    setWidgetRanges(prev => ({ ...prev, [widgetId]: { start, end } }));
+  };
+
+  const clearRange = (widgetId: string) => {
+    setWidgetRanges(prev => {
+      const next = { ...prev };
+      delete next[widgetId];
+      return next;
+    });
+  };
+
+  const applyRangeToData = <T,>(widgetId: string, data: T[]) => {
+    const range = widgetRanges[widgetId];
+    if (!range || data.length === 0) return data;
+    const end = Math.min(range.end, data.length - 1);
+    const start = Math.max(0, Math.min(range.start, end));
+    return data.slice(start, end + 1);
   };
 
   // --- Dashboard Logic ---
@@ -257,6 +393,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
           const isPercentMode = barMode === 'percent';
           const stackKeys = new Set<string>();
           const groups: Record<string, Record<string, number>> = {};
+          const categoryOrder: string[] = [];
 
           widgetData.forEach(row => {
               const dimVal = String(row[widget.dimension] || '(Empty)');
@@ -264,7 +401,10 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
               
               stackKeys.add(stackVal);
               
-              if (!groups[dimVal]) groups[dimVal] = {};
+              if (!groups[dimVal]) {
+                groups[dimVal] = {};
+                categoryOrder.push(dimVal);
+              }
               if (!groups[dimVal][stackVal]) groups[dimVal][stackVal] = 0;
 
               if (widget.measure === 'count') {
@@ -274,7 +414,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
               }
           });
 
-          const result = Object.keys(groups).map(dim => {
+          let result = Object.keys(groups).map(dim => {
               const row: any = { name: dim };
               let total = 0;
               Object.keys(groups[dim]).forEach(stack => {
@@ -284,9 +424,6 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
               row.total = total;
               return row;
           });
-
-          // Sort by total desc
-          result.sort((a, b) => b.total - a.total);
 
           const normalized = isPercentMode
             ? result.map(row => {
@@ -303,8 +440,10 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
             })
             : result;
 
+          const sorted = applySorting(normalized, widget, Array.from(stackKeys), categoryOrder);
+
           return {
-              data: widget.limit ? normalized.slice(0, widget.limit) : normalized,
+              data: widget.limit ? sorted.slice(0, widget.limit) : sorted,
               isStack: barMode !== 'grouped',
               stackKeys: Array.from(stackKeys).sort()
           };
@@ -312,6 +451,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       
       // 3. STANDARD CHARTS
       const groups: Record<string, number> = {};
+      const categoryOrder: string[] = [];
       
       widgetData.forEach(row => {
           let groupKey = String(row[widget.dimension]);
@@ -332,7 +472,10 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
           keysToProcess.forEach(k => {
               if (!k) return;
-              if (!groups[k]) groups[k] = 0;
+              if (!groups[k]) {
+                groups[k] = 0;
+                categoryOrder.push(k);
+              }
               
               if (widget.measure === 'count' || widget.type === 'wordcloud') {
                   groups[k]++;
@@ -350,8 +493,6 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
             : groups[k]
       }));
 
-      result.sort((a, b) => b.value - a.value);
-
       if (widget.barMode === 'percent') {
           const total = result.reduce((acc, curr) => acc + (curr.value || 0), 0);
           if (total > 0) {
@@ -361,14 +502,18 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       
       const limit = widget.limit || 20;
 
-      if (result.length > limit) {
+      const sorted = applySorting(result, widget, ['value'], categoryOrder);
+
+      if (sorted.length > limit) {
           if (widget.type === 'wordcloud') {
-               result = result.slice(0, limit); 
+               result = sorted.slice(0, limit);
           } else {
-               const others = result.slice(limit).reduce((acc, curr) => acc + curr.value, 0);
-               result = result.slice(0, limit);
+               const others = sorted.slice(limit).reduce((acc, curr) => acc + curr.value, 0);
+               result = sorted.slice(0, limit);
                result.push({ name: 'Others', value: others });
           }
+      } else {
+        result = sorted;
       }
 
       return { data: result, isStack: false };
@@ -376,14 +521,67 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
   // --- Multi-Series Data Processing (Google Sheets Style) ---
   const processMultiSeriesData = (widget: DashboardWidget) => {
-    if (!widget.series || widget.series.length === 0 || !widget.dimension) {
+    if (!widget.series || widget.series.length === 0) {
       return [];
     }
 
+    const normalizedSeries = widget.series.map(s =>
+      s.measureCol && s.measure === 'count' ? { ...s, measure: 'sum' as const } : s
+    );
+
+    const resolvedDimension = widget.dimension || normalizedSeries.find(s => s.dimension)?.dimension || 'category';
+    const axisKey = resolvedDimension;
     const result: Record<string, any> = {};
+    const categoryOrder: string[] = [];
+    const seenCategories = new Set<string>();
+    const parseNumber = (val: any) => {
+      if (typeof val === 'string') {
+        const cleaned = val.replace(/,/g, '').trim();
+        const parsed = parseFloat(cleaned);
+        return isNaN(parsed) ? 0 : parsed;
+      }
+      const num = Number(val);
+      return isNaN(num) ? 0 : num;
+    };
+
+    const stackBy = widget.type === 'stacked' ? widget.stackBy : undefined;
+    const basePalette = widget.style?.palette || getPalette(widget);
+
+    // Seed category order from the shared dimension to keep combo axes aligned
+    applyWidgetFilters(filteredData, widget.filters).forEach(row => {
+      const baseKey = String(row[resolvedDimension] ?? 'N/A');
+      if (!seenCategories.has(baseKey)) {
+        seenCategories.add(baseKey);
+        categoryOrder.push(baseKey);
+        result[baseKey] = { name: baseKey, [axisKey]: baseKey };
+      }
+    });
+
+    const stackSeries = (() => {
+      if (!stackBy) return null;
+      const values: string[] = [];
+      const seen = new Set<string>();
+      applyWidgetFilters(filteredData, widget.filters).forEach(row => {
+        const v = String(row[stackBy] ?? 'N/A');
+        if (!seen.has(v)) {
+          seen.add(v);
+          values.push(v);
+        }
+      });
+      const base = normalizedSeries[0];
+      return values.slice(0, 12).map((val, idx) => ({
+        ...base,
+        id: `stack-${idx}`,
+        label: val,
+        type: 'bar' as const,
+        color: basePalette[idx % basePalette.length],
+      }));
+    })();
+
+    const workingSeries = stackSeries || normalizedSeries;
 
     // For each series
-    widget.series.forEach(s => {
+    workingSeries.forEach(s => {
       // Apply widget-level filters first
       let data = applyWidgetFilters(filteredData, widget.filters);
 
@@ -396,33 +594,60 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
       // Aggregate
       data.forEach(row => {
-        const dimValue = String(row[widget.dimension] || 'N/A');
+        const seriesDimension = s.dimension || resolvedDimension;
+        const dimValue = String(row[seriesDimension] ?? 'N/A');
+        const axisValue = String(row[resolvedDimension] ?? dimValue);
 
-        if (!result[dimValue]) {
-          result[dimValue] = { [widget.dimension]: dimValue };
+        if (!seenCategories.has(axisValue)) {
+          seenCategories.add(axisValue);
+          categoryOrder.push(axisValue);
+          result[axisValue] = { name: axisValue, [axisKey]: axisValue };
         }
 
-        if (s.measure === 'count') {
-          result[dimValue][s.id] = (result[dimValue][s.id] || 0) + 1;
-        } else if (s.measure === 'sum' && s.measureCol) {
-          const val = parseFloat(String(row[s.measureCol])) || 0;
-          result[dimValue][s.id] = (result[dimValue][s.id] || 0) + val;
-        } else if (s.measure === 'avg' && s.measureCol) {
-          if (!result[dimValue][`${s.id}_sum`]) {
-            result[dimValue][`${s.id}_sum`] = 0;
-            result[dimValue][`${s.id}_count`] = 0;
+        const resolvedMeasure = s.measureCol && s.measure === 'count' ? 'sum' : s.measure;
+
+        if (stackBy) {
+          const stackKey = String(row[stackBy] ?? 'N/A');
+          if (stackSeries && stackKey !== s.label) return;
+          if (resolvedMeasure === 'count') {
+            result[axisValue][s.id] = (result[axisValue][s.id] || 0) + 1;
+          } else if (resolvedMeasure === 'sum' && s.measureCol) {
+            const val = parseNumber(row[s.measureCol]);
+            result[axisValue][s.id] = (result[axisValue][s.id] || 0) + val;
+          } else if (resolvedMeasure === 'avg' && s.measureCol) {
+            if (!result[axisValue][`${s.id}_sum`]) {
+              result[axisValue][`${s.id}_sum`] = 0;
+              result[axisValue][`${s.id}_count`] = 0;
+            }
+            const val = parseNumber(row[s.measureCol]);
+            result[axisValue][`${s.id}_sum`] += val;
+            result[axisValue][`${s.id}_count`] += 1;
           }
-          const val = parseFloat(String(row[s.measureCol])) || 0;
-          result[dimValue][`${s.id}_sum`] += val;
-          result[dimValue][`${s.id}_count`] += 1;
+          return;
+        }
+
+        if (resolvedMeasure === 'count') {
+          result[axisValue][s.id] = (result[axisValue][s.id] || 0) + 1;
+        } else if (resolvedMeasure === 'sum' && s.measureCol) {
+          const val = parseNumber(row[s.measureCol]);
+          result[axisValue][s.id] = (result[axisValue][s.id] || 0) + val;
+        } else if (resolvedMeasure === 'avg' && s.measureCol) {
+          if (!result[axisValue][`${s.id}_sum`]) {
+            result[axisValue][`${s.id}_sum`] = 0;
+            result[axisValue][`${s.id}_count`] = 0;
+          }
+          const val = parseNumber(row[s.measureCol]);
+          result[axisValue][`${s.id}_sum`] += val;
+          result[axisValue][`${s.id}_count`] += 1;
         }
       });
     });
 
     // Finalize averages
     Object.values(result).forEach(item => {
-      widget.series!.forEach(s => {
-        if (s.measure === 'avg') {
+      workingSeries.forEach(s => {
+        const resolvedMeasure = s.measureCol && s.measure === 'count' ? 'sum' : s.measure;
+        if (resolvedMeasure === 'avg') {
           const count = item[`${s.id}_count`] || 0;
           if (count > 0) {
             item[s.id] = item[`${s.id}_sum`] / count;
@@ -430,59 +655,96 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
           delete item[`${s.id}_sum`];
           delete item[`${s.id}_count`];
         }
+        if (item[s.id] === undefined) {
+          item[s.id] = 0;
+        }
       });
     });
 
     // Sort and limit
-    const sorted = Object.values(result)
-      .sort((a, b) => {
-        const aVal = widget.series!.reduce((sum, s) => sum + (a[s.id] || 0), 0);
-        const bVal = widget.series!.reduce((sum, s) => sum + (b[s.id] || 0), 0);
-        return bVal - aVal;
-      })
-      .slice(0, widget.limit || 20);
-
-    return sorted;
-  };
-
-  const handleAnalyze = async () => {
-    setIsAnalyzing(true);
-    try {
-        const summary: DataSummary = {
-            totalRows: filteredData.length,
-            projectName: project.name,
-            channelDistribution: {},
-            sentimentDistribution: {},
-            topTags: []
-        };
-        // Pass AI Settings
-        const result = await analyzeProjectData(summary, project.aiSettings);
-        setAiAnalysis(result);
-    } catch (e) {
-        setAiAnalysis("Analysis unavailable at this moment. Check Settings.");
-    } finally {
-        setIsAnalyzing(false);
-    }
+    const sorted = applySorting(Object.values(result), widget, workingSeries.map(s => s.id), categoryOrder);
+    return sorted.slice(0, widget.limit || 20);
   };
 
   const renderWidget = (widget: DashboardWidget) => {
       try {
         // Validation: Ensure widget has required fields
-        if (!widget.dimension && widget.type !== 'kpi') {
+        const resolvedDimension = widget.dimension || widget.series?.find(s => s.dimension)?.dimension;
+        if (!resolvedDimension && widget.type !== 'kpi') {
           return <div className="flex items-center justify-center h-full text-gray-400 text-sm">Invalid widget: Missing dimension</div>;
         }
 
         // NEW: Multi-Series Chart Rendering (Google Sheets Style)
       if (widget.series && widget.series.length > 0 && widget.type !== 'pie' && widget.type !== 'kpi' && widget.type !== 'wordcloud' && widget.type !== 'table') {
-        const data = processMultiSeriesData(widget);
+        const rawData = processMultiSeriesData({ ...widget, dimension: resolvedDimension || widget.dimension });
+        const data = applyRangeToData(widget.id, rawData);
         if (!data || data.length === 0) return <div className="flex items-center justify-center h-full text-gray-400 text-sm">No Data</div>;
 
+        const isStacked = widget.type === 'stacked';
+        const isScatter = widget.type === 'scatter';
         const hasRightAxis = widget.series.some(s => s.yAxis === 'right');
+        const axisKey = resolvedDimension || widget.dimension || widget.series[0]?.dimension || 'category';
         const legendConfig = widget.legend || { enabled: true, position: 'bottom', fontSize: 11, fontColor: '#666666', alignment: 'center' };
         const xAxisConfig = widget.xAxis || { fontSize: 11, fontColor: '#666666', slant: 0, showGridlines: true };
         const leftYAxisConfig = widget.leftYAxis || { fontSize: 11, fontColor: '#666666', min: 'auto', max: 'auto', format: '#,##0', showGridlines: true };
         const rightYAxisConfig = widget.rightYAxis || { fontSize: 11, fontColor: '#666666', min: 'auto', max: 'auto', format: '#,##0', showGridlines: false };
         const dataLabelsConfig = widget.dataLabels || { enabled: false, position: 'top', fontSize: 11, fontWeight: 'normal', color: '#000000' };
+        const quickRanges = widget.interaction?.quickRanges || [];
+
+        if (isScatter) {
+          const scatterData = data.map((row, idx) => ({ ...row, __xIndex: idx }));
+          return (
+            <div className="h-full flex flex-col">
+              {widget.chartTitle && (
+                <div className="px-4 pt-2 pb-1">
+                  <h4 className="text-sm font-semibold text-gray-900">{widget.chartTitle}</h4>
+                  {widget.subtitle && <p className="text-xs text-gray-500">{widget.subtitle}</p>}
+                </div>
+              )}
+              <div className="px-4 flex gap-2 items-center text-[11px] text-gray-500">
+                {legendConfig.enabled && <span>Click points to inspect</span>}
+              </div>
+              <ResponsiveContainer width="100%" height={320}>
+                <ScatterChart margin={{ left: 20, right: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis
+                    dataKey="__xIndex"
+                    type="number"
+                    tickFormatter={(val) => scatterData[val]?.name || val}
+                    tick={{ fontSize: xAxisConfig.fontSize, fill: xAxisConfig.fontColor }}
+                  />
+                  <YAxis
+                    tick={{ fontSize: leftYAxisConfig.fontSize, fill: leftYAxisConfig.fontColor }}
+                    domain={[
+                      leftYAxisConfig.min === 'auto' ? 'auto' : leftYAxisConfig.min,
+                      leftYAxisConfig.max === 'auto' ? 'auto' : leftYAxisConfig.max,
+                    ]}
+                    label={leftYAxisConfig.title ? { value: leftYAxisConfig.title, angle: -90, position: 'insideLeft' } : undefined}
+                  />
+                  <Tooltip cursor={{ stroke: '#e2e8f0' }} />
+                  {legendConfig.enabled && (
+                    <Legend
+                      verticalAlign={legendConfig.position === 'bottom' ? 'bottom' : legendConfig.position === 'top' ? 'top' : 'middle'}
+                      align={legendConfig.alignment === 'right' ? 'right' : legendConfig.alignment === 'left' ? 'left' : 'center'}
+                      wrapperStyle={{ fontSize: `${legendConfig.fontSize}px`, color: legendConfig.fontColor || '#666666' }}
+                    />
+                  )}
+                  {widget.series.map((series, idx) => (
+                    <Scatter
+                      key={series.id}
+                      name={series.label || `Series ${idx + 1}`}
+                      data={scatterData}
+                      dataKey={series.id}
+                      fill={series.color || getWidgetColor(widget, series.id, idx)}
+                      shape={widget.style?.scatterShape || 'circle'}
+                      size={widget.style?.markerSize || 6}
+                    />
+                  ))}
+                </ScatterChart>
+              </ResponsiveContainer>
+            </div>
+          );
+        }
 
         return (
           <div className="h-full flex flex-col">
@@ -494,6 +756,27 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
               </div>
             )}
 
+            {quickRanges.length > 0 && (
+              <div className="flex items-center gap-2 mb-2 text-xs text-gray-600 flex-wrap">
+                <span>Quick ranges:</span>
+                {quickRanges.map(rangeVal => (
+                  <button
+                    key={rangeVal}
+                    onClick={() => updateRange(widget.id, Math.max(0, rawData.length - rangeVal), rawData.length - 1)}
+                    className="px-2 py-1 border border-gray-300 rounded hover:bg-gray-50"
+                  >
+                    Last {rangeVal}
+                  </button>
+                ))}
+                <button
+                  onClick={() => clearRange(widget.id)}
+                  className="px-2 py-1 border border-gray-200 rounded text-gray-600 hover:bg-gray-50"
+                >
+                  Reset
+                </button>
+              </div>
+            )}
+
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={data}>
                 <CartesianGrid
@@ -501,7 +784,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                   stroke="#f0f0f0"
                 />
                 <XAxis
-                  dataKey={widget.dimension}
+                  dataKey={axisKey}
                   angle={xAxisConfig.slant || 0}
                   textAnchor={xAxisConfig.slant ? 'end' : 'middle'}
                   height={xAxisConfig.slant === 90 ? 100 : xAxisConfig.slant === 45 ? 80 : 60}
@@ -529,7 +812,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                     ]}
                   />
                 )}
-                <Tooltip />
+                <Tooltip cursor={widget.interaction?.enableCrosshair ? { stroke: '#94a3b8', strokeWidth: 1 } : undefined} />
                 {legendConfig.enabled && (
                   <RechartsLegend
                     wrapperStyle={{ fontSize: legendConfig.fontSize }}
@@ -539,22 +822,24 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                 )}
 
                 {widget.series.map((s, idx) => {
-                  const Component = s.type === 'line' ? Line : s.type === 'area' ? Area : Bar;
+                  const Component = s.type === 'line' ? Line : s.type === 'area' ? Area : s.type === 'scatter' ? Scatter : Bar;
                   return (
                     <Component
                       key={s.id}
                       yAxisId={s.yAxis}
-                      type="monotone"
+                      type={widget.style?.smoothLines ? 'monotone' : 'linear'}
                       dataKey={s.id}
                       name={s.label}
-                      fill={s.color}
-                      stroke={s.color}
-                      fillOpacity={s.type === 'area' ? 0.3 : 1}
-                      strokeWidth={s.type === 'line' ? 2 : 0}
-                      onClick={(barData: any) => handleChartClick(null, widget, barData[widget.dimension])}
+                      fill={s.color || getWidgetColor(widget, s.id, idx)}
+                      stroke={s.color || getWidgetColor(widget, s.id, idx)}
+                      fillOpacity={s.type === 'area' ? widget.style?.areaOpacity ?? 0.3 : 1}
+                      strokeWidth={s.type === 'line' ? (widget.style?.lineWidth || 2) : 0}
+                      radius={widget.style?.barRadius ? [widget.style.barRadius, widget.style.barRadius, 0, 0] : undefined}
+                      stackId={isStacked && s.type === 'bar' ? 'stack' : undefined}
+                      onClick={(barData: any) => handleChartClick(null, widget, barData[axisKey])}
                       className="cursor-pointer"
                     >
-                      {dataLabelsConfig.enabled && (
+                      {dataLabelsConfig.enabled && s.type !== 'scatter' && (
                         <LabelList
                           dataKey={s.id}
                           position={dataLabelsConfig.position as any}
@@ -568,6 +853,19 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                     </Component>
                   );
                 })}
+                {widget.interaction?.enableBrush && (
+                  <Brush
+                    dataKey={axisKey}
+                    height={24}
+                    travellerWidth={10}
+                    stroke="#cbd5e1"
+                    onChange={(range) => {
+                      if (range?.startIndex !== undefined && range?.endIndex !== undefined) {
+                        updateRange(widget.id, range.startIndex, range.endIndex);
+                      }
+                    }}
+                  />
+                )}
               </ComposedChart>
             </ResponsiveContainer>
           </div>
@@ -675,9 +973,9 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                               label={showValues ? ({ name, value }) => `${name}: ${formatWidgetValue(widget, Number(value) || 0)}` : false}
                               labelLine={showValues}
                           >
-                              {(data as any[]).map((entry, index) => (
-                                  <Cell key={`cell-${index}`} fill={getWidgetColor(widget, entry.name, index)} />
-                              ))}
+                          {(data as any[]).map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={getWidgetColor(widget, entry.name, index)} />
+                            ))}
                           </Pie>
                           <Tooltip contentStyle={{borderRadius: '8px'}} />
                           {showLegend && <Legend iconType="circle" wrapperStyle={{fontSize: '12px'}} />}
@@ -687,37 +985,74 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
           case 'line':
           case 'area':
                const sortedData = [...(data as any[])].sort((a,b) => a.name.localeCompare(b.name));
-               const ChartComp = widget.type === 'line' ? LineChart : AreaChart;
-               const DataComp = widget.type === 'line' ? Line : Area;
-               const primaryColor = widget.color || palette[0] || '#3B82F6';
-               return (
-                  <ResponsiveContainer width="100%" height="100%">
-                      <ChartComp
-                        data={sortedData}
+               const rangedData = applyRangeToData(widget.id, sortedData);
+               const quickRanges = widget.interaction?.quickRanges || [];
+                const ChartComp = widget.type === 'line' ? LineChart : AreaChart;
+                const DataComp = widget.type === 'line' ? Line : Area;
+                const primaryColor = widget.color || palette[0] || '#3B82F6';
+                return (
+                  <div className="h-full flex flex-col">
+                    {quickRanges.length > 0 && (
+                      <div className="flex items-center gap-2 mb-2 text-xs text-gray-600 flex-wrap">
+                        <span>Quick ranges:</span>
+                        {quickRanges.map(rangeVal => (
+                          <button
+                            key={rangeVal}
+                            onClick={() => updateRange(widget.id, Math.max(0, sortedData.length - rangeVal), sortedData.length - 1)}
+                            className="px-2 py-1 border border-gray-300 rounded hover:bg-gray-50"
+                          >
+                            Last {rangeVal}
+                          </button>
+                        ))}
+                        <button
+                          onClick={() => clearRange(widget.id)}
+                          className="px-2 py-1 border border-gray-200 rounded text-gray-600 hover:bg-gray-50"
+                        >
+                          Reset
+                        </button>
+                      </div>
+                    )}
+                    <ResponsiveContainer width="100%" height="100%">
+                        <ChartComp
+                        data={rangedData}
                         margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
                         onClick={(e) => e && e.activeLabel && handleChartClick(null, widget, e.activeLabel)}
                       >
                           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
                           <XAxis dataKey="name" tick={{fontSize: 11}} />
                           <YAxis tick={{fontSize: 11}} tickFormatter={(val) => formatWidgetValue(widget, Number(val) || 0)} />
-                          <Tooltip contentStyle={{borderRadius: '8px'}} />
+                          <Tooltip contentStyle={{borderRadius: '8px'}} cursor={widget.interaction?.enableCrosshair ? { stroke: '#94a3b8', strokeWidth: 1 } : undefined} />
                           <DataComp
-                            type="monotone"
+                            type={widget.style?.smoothLines ? 'monotone' : 'linear'}
                             dataKey="value"
                             stroke={primaryColor}
                             fill={primaryColor}
                             fillOpacity={0.2}
-                            strokeWidth={2}
-                            dot={{r: 4}}
-                            activeDot={{r: 6}}
+                            strokeWidth={widget.style?.lineWidth || 2}
+                            dot={{r: widget.style?.markerSize || 4}}
+                            activeDot={{r: (widget.style?.markerSize || 4) + 2}}
                             className="cursor-pointer"
                           >
                               {showValues && <LabelList dataKey="value" position="top" formatter={(val: number) => formatWidgetValue(widget, Number(val) || 0)} />}
                           </DataComp>
+                          {widget.interaction?.enableBrush && (
+                            <Brush
+                              dataKey="name"
+                              height={22}
+                              travellerWidth={10}
+                              stroke="#cbd5e1"
+                              onChange={(range) => {
+                                if (range?.startIndex !== undefined && range?.endIndex !== undefined) {
+                                  updateRange(widget.id, range.startIndex, range.endIndex);
+                                }
+                              }}
+                            />
+                          )}
                           {showLegend && <Legend iconType="circle" wrapperStyle={{fontSize: '12px'}} />}
                       </ChartComp>
-                  </ResponsiveContainer>
-               );
+                   </ResponsiveContainer>
+                  </div>
+                );
            case 'kpi':
                const total = (data as any[]).reduce((acc, curr) => acc + curr.value, 0);
                const formattedTotal = formatWidgetValue(widget, total);
@@ -794,10 +1129,10 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                                            }} className="text-blue-500 hover:underline text-xs">View</button>
                                        </td>
                                    </tr>
-                               ))}
-                           </tbody>
-                       </table>
-                   </div>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                );
           default:
               return null;
@@ -827,7 +1162,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
   if (baseData.length === 0) {
       return (
         <div className="p-12">
-            <EmptyState 
+            <EmptyState
                 icon={Table}
                 title="Data is not ready"
                 description="Please go to Data Prep and structure your data before creating analytics."
@@ -835,6 +1170,8 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
         </div>
       );
   }
+
+  const gridColumns = comparisonLayout === 'dense' ? 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3' : 'grid-cols-1 lg:grid-cols-2';
 
   return (
     <div className="p-8 bg-[#F8F9FA] min-h-full overflow-y-auto flex flex-col">
@@ -903,23 +1240,61 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
         </div>
       </div>
 
-      {/* AI INSIGHTS (Optional) */}
       {!isPresentationMode && (
-         <div className="mb-8">
-             <button
-                onClick={handleAnalyze}
-                disabled={isAnalyzing}
-                className="w-full md:w-auto px-6 py-3 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 rounded-lg text-sm font-medium flex items-center justify-center transition-all group shadow-sm"
-             >
-                {isAnalyzing ? (
-                    <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Analyzing...</>
-                ) : (
-                    <><Bot className="w-5 h-5 mr-2 group-hover:scale-110 transition-transform" /> Get AI Executive Summary</>
-                )}
-             </button>
-         </div>
+        <div className="mb-4 bg-white border border-gray-200 rounded-lg shadow-sm p-2">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-gray-700">
+            <div className="flex items-center gap-2 font-semibold text-gray-900">
+              <LayoutGrid className="w-4 h-4 text-blue-600" />
+              Saved views
+            </div>
+            <select
+              className="px-2 py-1.5 border border-gray-300 rounded-lg bg-white text-xs"
+              onChange={(e) => e.target.value && applySavedView(e.target.value)}
+              defaultValue=""
+            >
+              <option value="">Choose view</option>
+              {savedViews.map(view => (
+                <option key={view.id} value={view.id}>{view.name}</option>
+              ))}
+            </select>
+            <button
+              onClick={handleSaveViewConfig}
+              className="px-2.5 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              Save
+            </button>
+            {savedViews.length > 0 && (
+              <button
+                onClick={() => {
+                  const id = window.prompt('Type the exact saved view name to delete');
+                  const target = savedViews.find(v => v.name === id);
+                  if (target) deleteSavedView(target.id);
+                }}
+                className="px-2.5 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                Delete
+              </button>
+            )}
+            <div className="flex items-center gap-2 ml-auto">
+              <span className="text-[11px] text-gray-500">Layout</span>
+              <button
+                onClick={() => setComparisonLayout('balanced')}
+                className={`px-2.5 py-1 border rounded-lg text-xs ${comparisonLayout === 'balanced' ? 'bg-blue-100 border-blue-500 text-blue-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+              >
+                Two cols
+              </button>
+              <button
+                onClick={() => setComparisonLayout('dense')}
+                className={`px-2.5 py-1 border rounded-lg text-xs ${comparisonLayout === 'dense' ? 'bg-blue-100 border-blue-500 text-blue-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+              >
+                Compact
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
+      {/* AI INSIGHTS (Optional) */}
       {/* Global Filter Bar */}
       {(filters.length > 0 || !isPresentationMode) && (
       <div className={`bg-white border border-gray-200 rounded-xl p-4 mb-8 shadow-sm transition-all ${isPresentationMode ? 'opacity-80 hover:opacity-100' : ''}`}>
@@ -975,38 +1350,19 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       </div>
       )}
 
-      {/* AI Section (Insight Report) */}
-      {(aiAnalysis || isAnalyzing) && (
-         <div className="bg-white border border-blue-100 rounded-xl p-6 mb-8 shadow-sm animate-in fade-in relative">
-             <div className="flex justify-between items-start mb-4">
-                <div className="flex items-center text-blue-700 font-semibold">
-                    <Bot className="w-5 h-5 mr-2" /> AI Executive Summary
-                </div>
-                {aiAnalysis && <button onClick={() => setAiAnalysis(null)} className="text-gray-400 hover:text-gray-600"><Trash2 className="w-4 h-4" /></button>}
-             </div>
-             <div className="prose prose-sm max-w-none text-gray-700">
-                 {isAnalyzing ? (
-                    <div className="space-y-3">
-                        <Skeleton className="h-4 w-full" />
-                        <Skeleton className="h-4 w-5/6" />
-                        <Skeleton className="h-4 w-full" />
-                        <Skeleton className="h-4 w-4/6" />
-                    </div>
-                 ) : (
-                    aiAnalysis
-                 )}
-             </div>
-         </div>
-      )}
-
       {/* Dashboard Grid */}
-      <div ref={dashboardRef} className="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-10">
-          {widgets.map((widget) => (
-              <div 
-                key={widget.id} 
-                className={`report-widget bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col ${widget.width === 'full' ? 'lg:col-span-2' : ''} transition-all hover:shadow-md group relative`}
-                style={{ minHeight: '320px' }}
-              >
+        <div ref={dashboardRef} className={`grid ${gridColumns} gap-6 pb-10`}>
+            {widgets.map((widget) => {
+                const cardStyle = widget.style || {};
+                const cardRadius = cardStyle.cardRadius ?? 12;
+                const cardBackground = cardStyle.background || 'white';
+                const cardShadow = cardStyle.showShadow ? 'shadow-md' : 'shadow-sm';
+                return (
+                  <div
+                    key={widget.id}
+                    className={`report-widget p-5 border border-gray-200 flex flex-col ${widget.width === 'full' ? 'lg:col-span-2' : ''} transition-all group relative ${cardShadow}`}
+                    style={{ minHeight: '320px', background: cardBackground, borderRadius: `${cardRadius}px` }}
+                  >
                   {/* Widget Header */}
                   <div className="flex justify-between items-start mb-4">
                       <div>
@@ -1046,7 +1402,8 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                       </div>
                   )}
               </div>
-          ))}
+              );
+          })}
           
           {!isPresentationMode && widgets.length === 0 && (
               <div className="col-span-full">
@@ -1116,7 +1473,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                                            </td>
                                        ))}
                                    </tr>
-                               ))}
+                                  ))}
                            </tbody>
                       </table>
                       {drillDown.data.length > 200 && (

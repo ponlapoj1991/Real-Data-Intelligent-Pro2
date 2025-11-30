@@ -82,7 +82,7 @@ export interface TransformationRule {
 
 // --- Dashboard & Widget Types (Phase 2 & 3 & 4) ---
 
-export type ChartType = 'bar' | 'line' | 'pie' | 'area' | 'kpi' | 'wordcloud' | 'table' | 'combo';
+export type ChartType = 'bar' | 'line' | 'pie' | 'area' | 'kpi' | 'wordcloud' | 'table' | 'combo' | 'stacked' | 'scatter';
 export type AggregateMethod = 'count' | 'sum' | 'avg';
 
 export interface DashboardFilter {
@@ -104,9 +104,10 @@ export interface DataLabelConfig {
 export interface SeriesConfig {
   id: string;
   label: string;
-  type: 'bar' | 'line' | 'area';
+  type: 'bar' | 'line' | 'area' | 'scatter';
   measure: AggregateMethod;
   measureCol?: string;
+  dimension?: string;
   filters?: DashboardFilter[];  // Per-series filters for time comparison
   yAxis: 'left' | 'right';
   color: string;
@@ -148,6 +149,34 @@ export interface CategoryConfig {
   hidden?: boolean; // Hide this category
 }
 
+export interface InteractionConfig {
+  enableBrush?: boolean;
+  enableZoom?: boolean;
+  enableCrosshair?: boolean;
+  quickRanges?: number[];
+}
+
+export interface StyleConfig {
+  palette?: string[];
+  lineWidth?: number;
+  markerSize?: number;
+  barRadius?: number;
+  smoothLines?: boolean;
+  background?: string;
+  areaOpacity?: number;
+  cardRadius?: number;
+  showShadow?: boolean;
+  scatterShape?: 'circle' | 'square' | 'diamond';
+}
+
+export type SortMode = 'none' | 'asc' | 'desc' | 'custom';
+export interface SortConfig {
+  mode: SortMode;
+  key?: 'total' | 'dimension';
+  customOrder?: string[];
+  persistedOrder?: string[];
+}
+
 export interface DashboardWidget {
   id: string;
   title: string;
@@ -187,6 +216,19 @@ export interface DashboardWidget {
 
   // Per-Category Configuration (NEW)
   categoryConfig?: Record<string, CategoryConfig>;  // { 'Facebook': { color: '#1877F2' } }
+
+  // Styling bundle
+  style?: StyleConfig;
+  palette?: string[];
+
+  // Interactions
+  interaction?: InteractionConfig;
+
+  // Sorting
+  sort?: SortConfig;
+
+  // Template reference
+  templateId?: string;
 
   // Legacy Visual Options (for backward compatibility)
   showValues?: boolean;
