@@ -1,17 +1,16 @@
 /**
- * ChartBuilder v5 - Multiple Series + Combo Chart Support
+ * ChartBuilder v5.1 - Complete Combo Chart + All Fixes
  *
- * Features:
- * - Combo Chart (Bar + Line in same chart)
- * - Multiple Series support
- * - Dual Y-Axis (Left/Right)
- * - Series Management UI (Add/Edit/Delete)
- * - Color preset schemes
- * - Auto-aggregation from dimension
+ * FIXES:
+ * 1. Column Field shows in Series Modal (when Sum/Average)
+ * 2. Sort Options (Value, Name, Original Order)
+ * 3. Bar Orientation (Vertical/Horizontal)
+ * 4. Category Filter (checkbox list instead of limit)
+ * 5. Double-click to change bar colors
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, Save, ChevronDown, ChevronUp, Palette, Type as TypeIcon, Sliders as SlidersIcon, Plus, Trash2, Edit as EditIcon } from 'lucide-react';
+import { X, Save, ChevronDown, ChevronUp, Palette, Type as TypeIcon, Sliders as SlidersIcon, Plus, Trash2, Edit as EditIcon, Search } from 'lucide-react';
 import {
   ChartType,
   DashboardWidget,
@@ -21,7 +20,8 @@ import {
   AxisConfig,
   LegendConfig,
   CategoryConfig,
-  SeriesConfig
+  SeriesConfig,
+  SortOrder
 } from '../types';
 import {
   ResponsiveContainer,
@@ -54,23 +54,6 @@ const generateId = () => 'w-' + Date.now().toString(36) + Math.random().toString
 
 const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#6366F1'];
 
-// Color Presets
-const COLOR_PRESETS = {
-  sentiment: {
-    positive: '#10B981',
-    negative: '#EF4444',
-    neutral: '#9CA3AF'
-  },
-  platform: {
-    facebook: '#1877F2',
-    twitter: '#1DA1F2',
-    instagram: '#E4405F',
-    youtube: '#FF0000',
-    tiktok: '#000000',
-    linkedin: '#0A66C2'
-  }
-};
-
 // Collapsible Section
 const Section: React.FC<{
   title: string;
@@ -95,7 +78,83 @@ const Section: React.FC<{
   </div>
 );
 
-// Series Config Modal
+// Category Config Modal (for double-click)
+const CategoryConfigModal: React.FC<{
+  isOpen: boolean;
+  category: string;
+  config: CategoryConfig;
+  onClose: () => void;
+  onSave: (config: CategoryConfig) => void;
+}> = ({ isOpen, category, config, onClose, onSave }) => {
+  const [color, setColor] = useState(config.color || COLORS[0]);
+  const [label, setLabel] = useState(config.label || category);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-2xl p-6 w-96" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-lg font-bold text-gray-900 mb-4">Edit "{category}"</h3>
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Color</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={color}
+                onChange={(e) => setColor(e.target.value)}
+                className="w-16 h-10 border border-gray-300 rounded cursor-pointer"
+                style={{ outline: 'none' }}
+              />
+              <input
+                type="text"
+                value={color}
+                onChange={(e) => setColor(e.target.value)}
+                className="flex-1 px-3 py-2 border border-gray-300 rounded text-sm font-mono"
+                style={{ outline: 'none' }}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Custom Label</label>
+            <input
+              type="text"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder={category}
+              className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+              style={{ outline: 'none' }}
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 mt-6">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50"
+            style={{ outline: 'none' }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => {
+              onSave({ color, label: label !== category ? label : undefined });
+              onClose();
+            }}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
+            style={{ outline: 'none' }}
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Series Config Modal (FIXED: Column field shows full width)
 const SeriesConfigModal: React.FC<{
   isOpen: boolean;
   series: SeriesConfig | null;
@@ -110,6 +169,8 @@ const SeriesConfigModal: React.FC<{
   const [yAxis, setYAxis] = useState<'left' | 'right'>(series?.yAxis || 'left');
   const [color, setColor] = useState(series?.color || COLORS[0]);
 
+  const needsColumn = measure === 'sum' || measure === 'avg';
+
   if (!isOpen) return null;
 
   const handleSave = () => {
@@ -118,7 +179,7 @@ const SeriesConfigModal: React.FC<{
       label: label || 'Untitled Series',
       type,
       measure,
-      measureCol: measure !== 'count' ? measureCol : undefined,
+      measureCol: needsColumn ? measureCol : undefined,
       yAxis,
       color
     };
@@ -175,38 +236,37 @@ const SeriesConfigModal: React.FC<{
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Measure</label>
+            <select
+              value={measure}
+              onChange={(e) => setMeasure(e.target.value as AggregateMethod)}
+              className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+              style={{ outline: 'none' }}
+            >
+              <option value="count">Count</option>
+              <option value="sum">Sum</option>
+              <option value="avg">Average</option>
+            </select>
+          </div>
+
+          {/* FIXED: Column field shows full width when needed */}
+          {needsColumn && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Measure</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Column</label>
               <select
-                value={measure}
-                onChange={(e) => setMeasure(e.target.value as AggregateMethod)}
+                value={measureCol}
+                onChange={(e) => setMeasureCol(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
                 style={{ outline: 'none' }}
               >
-                <option value="count">Count</option>
-                <option value="sum">Sum</option>
-                <option value="avg">Average</option>
+                <option value="">Select...</option>
+                {availableColumns.map(col => (
+                  <option key={col} value={col}>{col}</option>
+                ))}
               </select>
             </div>
-
-            {(measure === 'sum' || measure === 'avg') && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Column</label>
-                <select
-                  value={measureCol}
-                  onChange={(e) => setMeasureCol(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
-                  style={{ outline: 'none' }}
-                >
-                  <option value="">Select...</option>
-                  {availableColumns.map(col => (
-                    <option key={col} value={col}>{col}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-          </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Color</label>
@@ -264,8 +324,15 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   const [title, setTitle] = useState('New Chart');
   const [type, setType] = useState<ChartType>('bar');
   const [dimension, setDimension] = useState('');
-  const [limit, setLimit] = useState<number>(10);
   const [width, setWidth] = useState<'half' | 'full'>('half');
+
+  // NEW: Sort & Orientation
+  const [sortBy, setSortBy] = useState<SortOrder>('value-desc');
+  const [barOrientation, setBarOrientation] = useState<'vertical' | 'horizontal'>('vertical');
+
+  // NEW: Category Filter (replaces limit)
+  const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
+  const [categorySearch, setCategorySearch] = useState('');
 
   // Multiple Series (for Combo charts)
   const [series, setSeries] = useState<SeriesConfig[]>([]);
@@ -323,6 +390,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   // UI state
   const [openSections, setOpenSections] = useState<Set<string>>(new Set());
   const [seriesModal, setSeriesModal] = useState<{ isOpen: boolean; series: SeriesConfig | null }>({ isOpen: false, series: null });
+  const [categoryModal, setCategoryModal] = useState<{ isOpen: boolean; category: string } | null>(null);
 
   // Initialize
   useEffect(() => {
@@ -330,16 +398,16 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       setTitle(initialWidget.title);
       setType(initialWidget.type);
       setDimension(initialWidget.dimension);
-      setLimit(initialWidget.limit || 10);
       setWidth(initialWidget.width);
+      setSortBy(initialWidget.sortBy || 'value-desc');
+      setBarOrientation(initialWidget.barOrientation || 'vertical');
+      setCategoryFilter(initialWidget.categoryFilter || []);
       setChartTitle(initialWidget.chartTitle || initialWidget.title);
       setSubtitle(initialWidget.subtitle || '');
 
-      // Load series or legacy single-series
       if (initialWidget.series && initialWidget.series.length > 0) {
         setSeries(initialWidget.series);
       } else {
-        // Legacy: convert to single series
         setMeasure(initialWidget.measure || 'count');
         setMeasureCol(initialWidget.measureCol || '');
       }
@@ -357,6 +425,17 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
     }
   }, [initialWidget, availableColumns]);
 
+  // Get all unique categories from data
+  const allCategories = useMemo(() => {
+    if (!dimension || data.length === 0) return [];
+    const unique = new Set<string>();
+    data.forEach(row => {
+      const val = String(row[dimension] || 'N/A');
+      unique.add(val);
+    });
+    return Array.from(unique).sort();
+  }, [dimension, data]);
+
   // Aggregate data for preview
   const previewData = useMemo(() => {
     if (!dimension || data.length === 0) return [];
@@ -367,6 +446,12 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
 
       data.forEach(row => {
         const dimValue = String(row[dimension] || 'N/A');
+
+        // Apply category filter
+        if (categoryFilter.length > 0 && !categoryFilter.includes(dimValue)) {
+          return;
+        }
+
         if (!groups[dimValue]) {
           groups[dimValue] = { name: dimValue };
         }
@@ -402,13 +487,12 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
         }
       });
 
-      return Object.values(groups)
-        .sort((a: any, b: any) => {
-          const aVal = series.length > 0 ? (a[series[0].id] || 0) : 0;
-          const bVal = series.length > 0 ? (b[series[0].id] || 0) : 0;
-          return bVal - aVal;
-        })
-        .slice(0, limit);
+      let result = Object.values(groups);
+
+      // Apply sorting
+      result = applySorting(result, sortBy, series.length > 0 ? series[0].id : 'value');
+
+      return result;
     }
 
     // For single-series (legacy)
@@ -416,6 +500,12 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
 
     data.forEach(row => {
       const dimValue = String(row[dimension] || 'N/A');
+
+      // Apply category filter
+      if (categoryFilter.length > 0 && !categoryFilter.includes(dimValue)) {
+        return;
+      }
+
       if (!groups[dimValue]) groups[dimValue] = 0;
 
       if (measure === 'count') {
@@ -444,15 +534,35 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       });
     }
 
-    return Object.keys(groups)
+    let result = Object.keys(groups)
       .filter(k => !k.includes('_'))
       .map(k => ({
         name: k,
         value: groups[k]
-      }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, limit);
-  }, [dimension, measure, measureCol, data, limit, type, series]);
+      }));
+
+    // Apply sorting
+    result = applySorting(result, sortBy, 'value');
+
+    return result;
+  }, [dimension, measure, measureCol, data, type, series, categoryFilter, sortBy]);
+
+  // Sorting function
+  const applySorting = (data: any[], order: SortOrder, valueKey: string) => {
+    switch (order) {
+      case 'value-desc':
+        return [...data].sort((a, b) => (b[valueKey] || 0) - (a[valueKey] || 0));
+      case 'value-asc':
+        return [...data].sort((a, b) => (a[valueKey] || 0) - (b[valueKey] || 0));
+      case 'name-asc':
+        return [...data].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      case 'name-desc':
+        return [...data].sort((a, b) => String(b.name).localeCompare(String(a.name)));
+      case 'original':
+      default:
+        return data; // No sorting
+    }
+  };
 
   const toggleSection = (section: string) => {
     const newSections = new Set(openSections);
@@ -470,8 +580,10 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       title,
       type,
       dimension,
-      limit,
       width,
+      sortBy,
+      barOrientation,
+      categoryFilter: categoryFilter.length > 0 ? categoryFilter : undefined,
       chartTitle,
       subtitle,
       legend,
@@ -516,8 +628,32 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
     }
   };
 
+  const handleCategoryToggle = (cat: string) => {
+    if (categoryFilter.includes(cat)) {
+      setCategoryFilter(categoryFilter.filter(c => c !== cat));
+    } else {
+      setCategoryFilter([...categoryFilter, cat]);
+    }
+  };
+
+  const handleSelectAllCategories = () => {
+    setCategoryFilter([...allCategories]);
+  };
+
+  const handleClearAllCategories = () => {
+    setCategoryFilter([]);
+  };
+
+  const handleBarDoubleClick = (category: string) => {
+    setCategoryModal({ isOpen: true, category });
+  };
+
   const showAxes = type !== 'pie' && type !== 'kpi' && type !== 'wordcloud' && type !== 'table';
   const isComboChart = type === 'combo';
+
+  const filteredCategories = allCategories.filter(cat =>
+    cat.toLowerCase().includes(categorySearch.toLowerCase())
+  );
 
   if (!isOpen) return null;
 
@@ -545,6 +681,8 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
               <h3 className="font-semibold text-gray-900">Live Preview</h3>
               <p className="text-xs text-gray-500 mt-1">
                 {isComboChart ? 'Multi-series combo chart' : 'Single series chart'}
+                {' • '}
+                {categoryFilter.length > 0 ? `${categoryFilter.length} categories` : 'All categories'}
               </p>
             </div>
 
@@ -568,6 +706,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                           cx="50%"
                           cy="50%"
                           label={dataLabels.enabled}
+                          onDoubleClick={(data: any) => handleBarDoubleClick(data.name)}
                           style={{ cursor: 'pointer', outline: 'none' }}
                         >
                           {previewData.map((entry: any, index) => (
@@ -581,36 +720,54 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                         <Tooltip />
                       </PieChart>
                     ) : isComboChart && series.length > 0 ? (
-                      <ComposedChart data={previewData}>
+                      <ComposedChart data={previewData} layout={barOrientation === 'horizontal' ? 'vertical' : 'horizontal'}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis
-                          dataKey="name"
-                          angle={xAxis.slant || 0}
-                          textAnchor={xAxis.slant ? 'end' : 'middle'}
-                          height={xAxis.slant === 90 ? 100 : xAxis.slant === 45 ? 80 : 60}
-                          tick={{ fontSize: xAxis.fontSize, fill: xAxis.fontColor }}
-                          style={{ outline: 'none' }}
-                        />
-                        <YAxis
-                          yAxisId="left"
-                          tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }}
-                          domain={[
-                            leftYAxis.min === 'auto' ? 'auto' : leftYAxis.min,
-                            leftYAxis.max === 'auto' ? 'auto' : leftYAxis.max
-                          ]}
-                          style={{ outline: 'none' }}
-                        />
-                        {series.some(s => s.yAxis === 'right') && (
-                          <YAxis
-                            yAxisId="right"
-                            orientation="right"
-                            tick={{ fontSize: rightYAxis.fontSize, fill: rightYAxis.fontColor }}
-                            domain={[
-                              rightYAxis.min === 'auto' ? 'auto' : rightYAxis.min,
-                              rightYAxis.max === 'auto' ? 'auto' : rightYAxis.max
-                            ]}
-                            style={{ outline: 'none' }}
-                          />
+                        {barOrientation === 'vertical' ? (
+                          <>
+                            <XAxis
+                              dataKey="name"
+                              angle={xAxis.slant || 0}
+                              textAnchor={xAxis.slant ? 'end' : 'middle'}
+                              height={xAxis.slant === 90 ? 100 : xAxis.slant === 45 ? 80 : 60}
+                              tick={{ fontSize: xAxis.fontSize, fill: xAxis.fontColor }}
+                              style={{ outline: 'none' }}
+                            />
+                            <YAxis
+                              yAxisId="left"
+                              tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }}
+                              domain={[
+                                leftYAxis.min === 'auto' ? 'auto' : leftYAxis.min,
+                                leftYAxis.max === 'auto' ? 'auto' : leftYAxis.max
+                              ]}
+                              style={{ outline: 'none' }}
+                            />
+                            {series.some(s => s.yAxis === 'right') && (
+                              <YAxis
+                                yAxisId="right"
+                                orientation="right"
+                                tick={{ fontSize: rightYAxis.fontSize, fill: rightYAxis.fontColor }}
+                                domain={[
+                                  rightYAxis.min === 'auto' ? 'auto' : rightYAxis.min,
+                                  rightYAxis.max === 'auto' ? 'auto' : rightYAxis.max
+                                ]}
+                                style={{ outline: 'none' }}
+                              />
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <XAxis
+                              type="number"
+                              tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }}
+                              style={{ outline: 'none' }}
+                            />
+                            <YAxis
+                              type="category"
+                              dataKey="name"
+                              tick={{ fontSize: xAxis.fontSize, fill: xAxis.fontColor }}
+                              style={{ outline: 'none' }}
+                            />
+                          </>
                         )}
                         <Tooltip />
                         {legend.enabled && <RechartsLegend />}
@@ -623,7 +780,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                                 dataKey={s.id}
                                 name={s.label}
                                 fill={s.color}
-                                yAxisId={s.yAxis}
+                                yAxisId={barOrientation === 'vertical' ? s.yAxis : undefined}
                                 style={{ outline: 'none' }}
                               />
                             );
@@ -635,7 +792,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                                 name={s.label}
                                 stroke={s.color}
                                 strokeWidth={2}
-                                yAxisId={s.yAxis}
+                                yAxisId={barOrientation === 'vertical' ? s.yAxis : undefined}
                                 dot={{ r: 4 }}
                                 style={{ outline: 'none' }}
                               />
@@ -648,7 +805,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                                 name={s.label}
                                 fill={s.color}
                                 stroke={s.color}
-                                yAxisId={s.yAxis}
+                                yAxisId={barOrientation === 'vertical' ? s.yAxis : undefined}
                                 style={{ outline: 'none' }}
                               />
                             );
@@ -699,28 +856,50 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                         </Line>
                       </ComposedChart>
                     ) : (
-                      <BarChart data={previewData}>
+                      <BarChart
+                        data={previewData}
+                        layout={barOrientation === 'horizontal' ? 'vertical' : 'horizontal'}
+                      >
                         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis
-                          dataKey="name"
-                          angle={xAxis.slant || 0}
-                          textAnchor={xAxis.slant ? 'end' : 'middle'}
-                          height={xAxis.slant === 90 ? 100 : xAxis.slant === 45 ? 80 : 60}
-                          tick={{ fontSize: xAxis.fontSize, fill: xAxis.fontColor }}
-                          style={{ outline: 'none' }}
-                        />
-                        <YAxis
-                          tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }}
-                          domain={[
-                            leftYAxis.min === 'auto' ? 'auto' : leftYAxis.min,
-                            leftYAxis.max === 'auto' ? 'auto' : leftYAxis.max
-                          ]}
-                          style={{ outline: 'none' }}
-                        />
+                        {barOrientation === 'vertical' ? (
+                          <>
+                            <XAxis
+                              dataKey="name"
+                              angle={xAxis.slant || 0}
+                              textAnchor={xAxis.slant ? 'end' : 'middle'}
+                              height={xAxis.slant === 90 ? 100 : xAxis.slant === 45 ? 80 : 60}
+                              tick={{ fontSize: xAxis.fontSize, fill: xAxis.fontColor }}
+                              style={{ outline: 'none' }}
+                            />
+                            <YAxis
+                              tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }}
+                              domain={[
+                                leftYAxis.min === 'auto' ? 'auto' : leftYAxis.min,
+                                leftYAxis.max === 'auto' ? 'auto' : leftYAxis.max
+                              ]}
+                              style={{ outline: 'none' }}
+                            />
+                          </>
+                        ) : (
+                          <>
+                            <XAxis
+                              type="number"
+                              tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }}
+                              style={{ outline: 'none' }}
+                            />
+                            <YAxis
+                              type="category"
+                              dataKey="name"
+                              tick={{ fontSize: xAxis.fontSize, fill: xAxis.fontColor }}
+                              style={{ outline: 'none' }}
+                            />
+                          </>
+                        )}
                         <Tooltip />
                         {legend.enabled && <RechartsLegend />}
                         <Bar
                           dataKey="value"
+                          onDoubleClick={(data: any) => handleBarDoubleClick(data.name)}
                           style={{ cursor: 'pointer', outline: 'none' }}
                         >
                           {previewData.map((entry: any, idx) => (
@@ -881,7 +1060,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
 
                   {/* Single Series Config (for non-combo charts) */}
                   {!isComboChart && (
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-3">
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">Measure</label>
                         <select
@@ -915,19 +1094,119 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                     </div>
                   )}
 
+                  {/* Sort Options */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Limit: {limit} items</label>
-                    <input
-                      type="range"
-                      min="5"
-                      max="50"
-                      step="5"
-                      value={limit}
-                      onChange={(e) => setLimit(parseInt(e.target.value))}
-                      className="w-full"
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Sort By</label>
+                    <select
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value as SortOrder)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
                       style={{ outline: 'none' }}
-                    />
+                    >
+                      <option value="value-desc">Value (High to Low)</option>
+                      <option value="value-asc">Value (Low to High)</option>
+                      <option value="name-asc">Name (A-Z)</option>
+                      <option value="name-desc">Name (Z-A)</option>
+                      <option value="original">Original Order (for Dates)</option>
+                    </select>
                   </div>
+
+                  {/* Bar Orientation */}
+                  {(type === 'bar' || isComboChart) && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Bar Orientation</label>
+                      <div className="flex gap-4">
+                        <label className="flex items-center">
+                          <input
+                            type="radio"
+                            name="orientation"
+                            value="vertical"
+                            checked={barOrientation === 'vertical'}
+                            onChange={(e) => setBarOrientation('vertical')}
+                            className="mr-2"
+                            style={{ outline: 'none' }}
+                          />
+                          <span className="text-sm">Vertical</span>
+                        </label>
+                        <label className="flex items-center">
+                          <input
+                            type="radio"
+                            name="orientation"
+                            value="horizontal"
+                            checked={barOrientation === 'horizontal'}
+                            onChange={(e) => setBarOrientation('horizontal')}
+                            className="mr-2"
+                            style={{ outline: 'none' }}
+                          />
+                          <span className="text-sm">Horizontal</span>
+                        </label>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Category Filter */}
+                  {allCategories.length > 0 && (
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="block text-sm font-medium text-gray-700">
+                          Categories ({categoryFilter.length > 0 ? categoryFilter.length : allCategories.length} of {allCategories.length})
+                        </label>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={handleSelectAllCategories}
+                            className="text-xs text-blue-600 hover:text-blue-800"
+                            style={{ outline: 'none' }}
+                          >
+                            Select All
+                          </button>
+                          <button
+                            onClick={handleClearAllCategories}
+                            className="text-xs text-gray-600 hover:text-gray-800"
+                            style={{ outline: 'none' }}
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      </div>
+
+                      {allCategories.length > 5 && (
+                        <div className="mb-2">
+                          <div className="relative">
+                            <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
+                            <input
+                              type="text"
+                              value={categorySearch}
+                              onChange={(e) => setCategorySearch(e.target.value)}
+                              placeholder="Search categories..."
+                              className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded text-sm"
+                              style={{ outline: 'none' }}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="border border-gray-200 rounded p-3 max-h-48 overflow-y-auto bg-gray-50">
+                        {filteredCategories.map((cat, idx) => (
+                          <label
+                            key={idx}
+                            className="flex items-center py-1.5 px-2 hover:bg-gray-100 rounded cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={categoryFilter.length === 0 || categoryFilter.includes(cat)}
+                              onChange={() => handleCategoryToggle(cat)}
+                              className="mr-2"
+                              style={{ outline: 'none' }}
+                            />
+                            <span className="text-sm text-gray-900">{cat}</span>
+                          </label>
+                        ))}
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {categoryFilter.length === 0 ? 'All categories shown' : `${categoryFilter.length} selected`}
+                      </p>
+                    </div>
+                  )}
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Widget Width</label>
@@ -1282,6 +1561,21 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
           availableColumns={availableColumns}
           onClose={() => setSeriesModal({ isOpen: false, series: null })}
           onSave={handleSaveSeries}
+        />
+      )}
+
+      {categoryModal && (
+        <CategoryConfigModal
+          isOpen={categoryModal.isOpen}
+          category={categoryModal.category}
+          config={categoryConfig[categoryModal.category] || {}}
+          onClose={() => setCategoryModal(null)}
+          onSave={(config) => {
+            setCategoryConfig({
+              ...categoryConfig,
+              [categoryModal.category]: config
+            });
+          }}
         />
       )}
     </div>

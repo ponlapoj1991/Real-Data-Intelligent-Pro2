@@ -84,6 +84,7 @@ export interface TransformationRule {
 
 export type ChartType = 'bar' | 'line' | 'pie' | 'area' | 'kpi' | 'wordcloud' | 'table' | 'combo';
 export type AggregateMethod = 'count' | 'sum' | 'avg';
+export type SortOrder = 'value-desc' | 'value-asc' | 'name-asc' | 'name-desc' | 'original';
 
 export interface DashboardFilter {
   id: string;
@@ -166,6 +167,8 @@ export interface DashboardWidget {
   filters?: DashboardFilter[];
 
   limit?: number;         // Limit rows (Top 10, 20, etc)
+  sortBy?: SortOrder;     // Sort order for data
+  categoryFilter?: string[]; // Selected categories to show (empty = show all)
 
   // Titles & Subtitles (NEW)
   chartTitle?: string;
