@@ -47,6 +47,8 @@ import {
 import {
   ResponsiveContainer,
   ComposedChart,
+  LineChart,
+  AreaChart,
   Bar,
   Line,
   Area,
