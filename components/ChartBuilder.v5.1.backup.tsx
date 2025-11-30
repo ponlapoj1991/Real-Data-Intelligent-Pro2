@@ -1,21 +1,12 @@
 /**
- * ChartBuilder v6.0 - Complete Chart System Redesign
+ * ChartBuilder v5.1 - Complete Combo Chart + All Fixes
  *
- * NEW FEATURES:
- * - Chart Type Selector Screen (Google Sheets style)
- * - Chart-specific configuration forms
- * - 23 chart types with proper metadata
- * - Stack By field for stacked charts
- * - Bubble chart support (3D scatter)
- * - Pie/Donut specific configs
- * - Line curve types
- *
- * PREVIOUS FIXES (v5.1):
- * 1. Column Field shows in Series Modal
- * 2. Sort Options (5 types)
- * 3. Bar Orientation
- * 4. Category Filter
- * 5. Double-click colors
+ * FIXES:
+ * 1. Column Field shows in Series Modal (when Sum/Average)
+ * 2. Sort Options (Value, Name, Original Order)
+ * 3. Bar Orientation (Vertical/Horizontal)
+ * 4. Category Filter (checkbox list instead of limit)
+ * 5. Double-click to change bar colors
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
@@ -32,9 +23,6 @@ import {
   SeriesConfig,
   SortOrder
 } from '../types';
-import ChartTypeSelector from './ChartTypeSelector';
-import ChartConfigForm from './ChartConfigForm';
-import { getDefaultOrientation } from '../utils/chartConfigHelpers';
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -330,40 +318,21 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   initialWidget,
   data
 }) => {
-  // UI State
-  const [showTypeSelector, setShowTypeSelector] = useState(true); // Show type selector first
   const [activeTab, setActiveTab] = useState<'setup' | 'customize'>('setup');
 
   // Widget state
   const [title, setTitle] = useState('New Chart');
-  const [type, setType] = useState<ChartType | null>(null); // null until selected
+  const [type, setType] = useState<ChartType>('bar');
   const [dimension, setDimension] = useState('');
   const [width, setWidth] = useState<'half' | 'full'>('half');
 
-  // Stacked Charts
-  const [stackBy, setStackBy] = useState('');
-
-  // Bubble/Scatter
-  const [xDimension, setXDimension] = useState('');
-  const [yDimension, setYDimension] = useState('');
-  const [sizeDimension, setSizeDimension] = useState('');
-  const [colorBy, setColorBy] = useState('');
-
-  // Pie/Donut
-  const [innerRadius, setInnerRadius] = useState(0);
-  const [startAngle, setStartAngle] = useState(0);
-
-  // Line
-  const [curveType, setCurveType] = useState<'linear' | 'monotone' | 'step'>('linear');
-  const [strokeWidth, setStrokeWidth] = useState(2);
-
-  // Sort & Filter
+  // NEW: Sort & Orientation
   const [sortBy, setSortBy] = useState<SortOrder>('value-desc');
+  const [barOrientation, setBarOrientation] = useState<'vertical' | 'horizontal'>('vertical');
+
+  // NEW: Category Filter (replaces limit)
   const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
   const [categorySearch, setCategorySearch] = useState('');
-
-  // Bar Orientation (deprecated - now determined by chart type)
-  const [barOrientation, setBarOrientation] = useState<'vertical' | 'horizontal'>('vertical');
 
   // Multiple Series (for Combo charts)
   const [series, setSeries] = useState<SeriesConfig[]>([]);
