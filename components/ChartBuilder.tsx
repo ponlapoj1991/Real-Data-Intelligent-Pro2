@@ -402,6 +402,15 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
     if ((!dimension && seriesList.every(s => !s.dimension)) || data.length === 0) return [];
 
     const axisKey = dimension || 'category';
+    const parseNumber = (val: any) => {
+      if (typeof val === 'string') {
+        const cleaned = val.replace(/,/g, '').trim();
+        const parsed = parseFloat(cleaned);
+        return isNaN(parsed) ? 0 : parsed;
+      }
+      const num = Number(val);
+      return isNaN(num) ? 0 : num;
+    };
 
     if (seriesList.length > 0) {
       const buckets: Record<string, any> = {};
@@ -420,14 +429,14 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
           if (series.measure === 'count') {
             buckets[dimValue][series.id] = (buckets[dimValue][series.id] || 0) + 1;
           } else if (series.measure === 'sum' && series.measureCol) {
-            const val = parseFloat(String(row[series.measureCol])) || 0;
+            const val = parseNumber(row[series.measureCol]);
             buckets[dimValue][series.id] = (buckets[dimValue][series.id] || 0) + val;
           } else if (series.measure === 'avg' && series.measureCol) {
             if (!buckets[dimValue][`${series.id}_sum`]) {
               buckets[dimValue][`${series.id}_sum`] = 0;
               buckets[dimValue][`${series.id}_count`] = 0;
             }
-            const val = parseFloat(String(row[series.measureCol])) || 0;
+            const val = parseNumber(row[series.measureCol]);
             buckets[dimValue][`${series.id}_sum`] += val;
             buckets[dimValue][`${series.id}_count`] += 1;
           }
@@ -443,6 +452,9 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
             }
             delete bucket[`${series.id}_sum`];
             delete bucket[`${series.id}_count`];
+          }
+          if (bucket[series.id] === undefined) {
+            bucket[series.id] = 0;
           }
         });
       });
@@ -465,14 +477,14 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       if (measure === 'count') {
         groups[dimValue]++;
       } else if (measure === 'sum' && measureCol) {
-        const val = parseFloat(String(row[measureCol])) || 0;
+        const val = parseNumber(row[measureCol]);
         groups[dimValue] += val;
       } else if (measure === 'avg' && measureCol) {
         if (!groups[`${dimValue}_sum`]) {
           groups[`${dimValue}_sum`] = 0;
           groups[`${dimValue}_count`] = 0;
         }
-        const val = parseFloat(String(row[measureCol])) || 0;
+        const val = parseNumber(row[measureCol]);
         groups[`${dimValue}_sum`] += val;
         groups[`${dimValue}_count`]++;
       }

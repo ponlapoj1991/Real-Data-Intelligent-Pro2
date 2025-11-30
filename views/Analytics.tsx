@@ -496,6 +496,15 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
     const axisKey = widget.dimension || 'category';
     const result: Record<string, any> = {};
     const categoryOrder: string[] = [];
+    const parseNumber = (val: any) => {
+      if (typeof val === 'string') {
+        const cleaned = val.replace(/,/g, '').trim();
+        const parsed = parseFloat(cleaned);
+        return isNaN(parsed) ? 0 : parsed;
+      }
+      const num = Number(val);
+      return isNaN(num) ? 0 : num;
+    };
 
     // For each series
     widget.series.forEach(s => {
@@ -523,14 +532,14 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
         if (s.measure === 'count') {
           result[dimValue][s.id] = (result[dimValue][s.id] || 0) + 1;
         } else if (s.measure === 'sum' && s.measureCol) {
-          const val = parseFloat(String(row[s.measureCol])) || 0;
+          const val = parseNumber(row[s.measureCol]);
           result[dimValue][s.id] = (result[dimValue][s.id] || 0) + val;
         } else if (s.measure === 'avg' && s.measureCol) {
           if (!result[dimValue][`${s.id}_sum`]) {
             result[dimValue][`${s.id}_sum`] = 0;
             result[dimValue][`${s.id}_count`] = 0;
           }
-          const val = parseFloat(String(row[s.measureCol])) || 0;
+          const val = parseNumber(row[s.measureCol]);
           result[dimValue][`${s.id}_sum`] += val;
           result[dimValue][`${s.id}_count`] += 1;
         }
@@ -547,6 +556,9 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
           }
           delete item[`${s.id}_sum`];
           delete item[`${s.id}_count`];
+        }
+        if (item[s.id] === undefined) {
+          item[s.id] = 0;
         }
       });
     });
