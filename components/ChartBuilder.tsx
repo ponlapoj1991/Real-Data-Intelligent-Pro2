@@ -425,6 +425,23 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
     }
   }, [initialWidget, availableColumns]);
 
+  // Sorting function (must be declared before useMemo that uses it)
+  const applySorting = (data: any[], order: SortOrder, valueKey: string) => {
+    switch (order) {
+      case 'value-desc':
+        return [...data].sort((a, b) => (b[valueKey] || 0) - (a[valueKey] || 0));
+      case 'value-asc':
+        return [...data].sort((a, b) => (a[valueKey] || 0) - (b[valueKey] || 0));
+      case 'name-asc':
+        return [...data].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      case 'name-desc':
+        return [...data].sort((a, b) => String(b.name).localeCompare(String(a.name)));
+      case 'original':
+      default:
+        return data; // No sorting
+    }
+  };
+
   // Get all unique categories from data
   const allCategories = useMemo(() => {
     if (!dimension || data.length === 0) return [];
@@ -546,23 +563,6 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
 
     return result;
   }, [dimension, measure, measureCol, data, type, series, categoryFilter, sortBy]);
-
-  // Sorting function
-  const applySorting = (data: any[], order: SortOrder, valueKey: string) => {
-    switch (order) {
-      case 'value-desc':
-        return [...data].sort((a, b) => (b[valueKey] || 0) - (a[valueKey] || 0));
-      case 'value-asc':
-        return [...data].sort((a, b) => (a[valueKey] || 0) - (b[valueKey] || 0));
-      case 'name-asc':
-        return [...data].sort((a, b) => String(a.name).localeCompare(String(b.name)));
-      case 'name-desc':
-        return [...data].sort((a, b) => String(b.name).localeCompare(String(a.name)));
-      case 'original':
-      default:
-        return data; // No sorting
-    }
-  };
 
   const toggleSection = (section: string) => {
     const newSections = new Set(openSections);
