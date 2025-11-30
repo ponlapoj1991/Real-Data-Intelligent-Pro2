@@ -2,7 +2,7 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Project, DashboardWidget, DashboardFilter, DrillDownState, RawRow } from '../types';
 import {
-    PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, AreaChart, Area, LabelList, ComposedChart, Legend as RechartsLegend
+    PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, AreaChart, Area, LabelList, ComposedChart, Legend as RechartsLegend, ScatterChart, Scatter, ZAxis
 } from 'recharts';
 import { Bot, Loader2, Plus, LayoutGrid, Trash2, Pencil, Filter, X, Presentation, FileOutput, Eye, EyeOff, Table, Download, ChevronRight, MousePointer2 } from 'lucide-react';
 import { analyzeProjectData, DataSummary } from '../utils/ai';
@@ -10,6 +10,7 @@ import { applyTransformation } from '../utils/transform';
 import { saveProject } from '../utils/storage-compat';
 import { generatePowerPoint } from '../utils/report';
 import { exportToExcel } from '../utils/excel';
+import { isStackedChart, is100StackedChart, isHorizontalChart, isPieChart, isAreaChart, isLineChart, isMultiSeriesChart } from '../utils/chartConfigHelpers';
 import ChartBuilder from '../components/ChartBuilder';
 import EmptyState from '../components/EmptyState';
 import Skeleton from '../components/Skeleton';
@@ -255,7 +256,13 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
   const processWidgetData = (widget: DashboardWidget) => {
       const widgetData = applyWidgetFilters(filteredData, widget.filters);
-      // 1. TABLE WIDGET
+      const measure = widget.measure || 'count';
+      const passCategory = (dim: string) => {
+        if (!widget.categoryFilter || widget.categoryFilter.length === 0) return true;
+        return widget.categoryFilter.includes(dim);
+      };
+
+      // 1) Table widget
       if (widget.type === 'table') {
           let processed = [...widgetData];
           if (widget.measureCol) {
@@ -269,134 +276,155 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
           return { data: processed.slice(0, widget.limit || 20), isStack: false };
       }
 
-      // 2. BAR CHART LOGIC
-      if (widget.type === 'bar' && widget.stackBy) {
-          const barMode = widget.barMode || 'stacked';
-          const isPercentMode = barMode === 'percent';
-          const stackKeys = new Set<string>();
-          const groups: Record<string, Record<string, number>> = {};
+      // 2) Scatter / Bubble
+      if ((widget.type === 'scatter' || widget.type === 'bubble') && widget.xDimension && widget.yDimension) {
+        const rows = widgetData
+          .map(row => {
+            const xVal = Number(row[widget.xDimension!]);
+            const yVal = Number(row[widget.yDimension!]);
+            if (Number.isNaN(xVal) || Number.isNaN(yVal)) return null;
+            const sizeVal = widget.sizeDimension ? Number(row[widget.sizeDimension]) : undefined;
+            const colorVal = widget.colorBy ? String(row[widget.colorBy]) : undefined;
+            const nameVal = widget.dimension ? String(row[widget.dimension] || 'N/A') : undefined;
+            return { x: xVal, y: yVal, z: sizeVal, name: nameVal, colorKey: colorVal };
+          })
+          .filter(Boolean) as any[];
+        return { data: rows, isStack: false };
+      }
 
-          widgetData.forEach(row => {
-              const dimVal = String(row[widget.dimension] || '(Empty)');
-              const stackVal = String(row[widget.stackBy!] || '(Other)');
-              
-              stackKeys.add(stackVal);
-              
-              if (!groups[dimVal]) groups[dimVal] = {};
-              if (!groups[dimVal][stackVal]) groups[dimVal][stackVal] = 0;
+      // 3) Multi-series (Combo)
+      if (isMultiSeriesChart(widget.type) && widget.series && widget.series.length > 0 && widget.dimension) {
+        const groups: Record<string, any> = {};
 
-              if (widget.measure === 'count') {
-                  groups[dimVal][stackVal]++;
-              } else {
-                  groups[dimVal][stackVal] += Number(row[widget.measureCol || '']) || 0;
+        widget.series.forEach(s => {
+          let rows = widgetData;
+          if (s.filters && s.filters.length > 0) {
+            rows = applyWidgetFilters(rows, s.filters);
+          }
+
+          rows.forEach(row => {
+            const dimValue = String(row[widget.dimension!] || 'N/A');
+            if (!passCategory(dimValue)) return;
+            if (!groups[dimValue]) groups[dimValue] = { [widget.dimension!]: dimValue };
+
+            if (s.measure === 'count') {
+              groups[dimValue][s.id] = (groups[dimValue][s.id] || 0) + 1;
+            } else if (s.measure === 'sum' && s.measureCol) {
+              const val = parseFloat(String(row[s.measureCol])) || 0;
+              groups[dimValue][s.id] = (groups[dimValue][s.id] || 0) + val;
+            } else if (s.measure === 'avg' && s.measureCol) {
+              const sumKey = `${s.id}_sum`;
+              const countKey = `${s.id}_count`;
+              if (!groups[dimValue][sumKey]) {
+                groups[dimValue][sumKey] = 0;
+                groups[dimValue][countKey] = 0;
               }
+              const val = parseFloat(String(row[s.measureCol])) || 0;
+              groups[dimValue][sumKey] += val;
+              groups[dimValue][countKey] += 1;
+            }
           });
+        });
 
-          let result = Object.keys(groups).map(dim => {
-              const row: any = { name: dim };
-              let total = 0;
-              Object.keys(groups[dim]).forEach(stack => {
-                  row[stack] = groups[dim][stack];
-                  total += groups[dim][stack];
-              });
-              row.total = total;
-              return row;
+        Object.values(groups).forEach(item => {
+          widget.series!.forEach(s => {
+            if (s.measure === 'avg') {
+              const count = item[`${s.id}_count`] || 0;
+              item[s.id] = count > 0 ? item[`${s.id}_sum`] / count : 0;
+              delete item[`${s.id}_sum`];
+              delete item[`${s.id}_count`];
+            }
           });
+        });
 
-          // Apply sorting based on widget.sortBy
-          result = applySorting(result, widget.sortBy, 'total');
-
-          const normalized = isPercentMode
-            ? result.map(row => {
-                const total = row.total || 0;
-                const next = { ...row } as Record<string, number | string>;
-                if (total > 0) {
-                  Array.from(stackKeys).forEach(key => {
-                    const val = (row as any)[key] || 0;
-                    next[key] = (val / total) * 100;
-                  });
-                  next.total = 100;
-                }
-                return next;
-            })
-            : result;
-
-          return {
-              data: widget.limit ? normalized.slice(0, widget.limit) : normalized,
-              isStack: barMode !== 'grouped',
-              stackKeys: Array.from(stackKeys).sort()
-          };
+        let sorted = applySorting(Object.values(groups), widget.sortBy, widget.series[0].id);
+        return { data: sorted, isStack: false };
       }
-      
-      // 3. STANDARD CHARTS
-      const groups: Record<string, number> = {};
-      
-      widgetData.forEach(row => {
-          let groupKey = String(row[widget.dimension]);
-          if (row[widget.dimension] === null || row[widget.dimension] === undefined) groupKey = "(Empty)";
 
-          // Handle Array values: explode them for count
-          let keysToProcess = [groupKey];
-          if (groupKey.startsWith('[') || groupKey.includes(',')) {
-             try {
-                if (groupKey.startsWith('[')) {
-                     const parsed = JSON.parse(groupKey.replace(/'/g, '"'));
-                     if (Array.isArray(parsed)) keysToProcess = parsed.map(String);
-                } else {
-                     keysToProcess = groupKey.split(',').map(s => s.trim());
-                }
-             } catch(e) {}
+      // 4) Stacked charts
+      if (isStackedChart(widget.type) && widget.stackBy && widget.dimension) {
+        const groups: Record<string, Record<string, { sum: number; count: number }>> = {};
+        const stackKeys = new Set<string>();
+
+        widgetData.forEach(row => {
+          const dimValue = String(row[widget.dimension!] || 'N/A');
+          const stackValue = String(row[widget.stackBy!] || 'อื่นๆ');
+          if (!passCategory(dimValue)) return;
+
+          stackKeys.add(stackValue);
+          if (!groups[dimValue]) groups[dimValue] = {};
+          if (!groups[dimValue][stackValue]) groups[dimValue][stackValue] = { sum: 0, count: 0 };
+
+          if (measure === 'count') {
+            groups[dimValue][stackValue].sum += 1;
+            groups[dimValue][stackValue].count += 1;
+          } else if (widget.measureCol) {
+            const val = Number(row[widget.measureCol]) || 0;
+            groups[dimValue][stackValue].sum += val;
+            groups[dimValue][stackValue].count += 1;
           }
+        });
 
-          keysToProcess.forEach(k => {
-              if (!k) return;
-              if (!groups[k]) groups[k] = 0;
-              
-              if (widget.measure === 'count' || widget.type === 'wordcloud') {
-                  groups[k]++;
-              } else {
-                  const val = Number(row[widget.measureCol || '']) || 0;
-                  groups[k] += val;
-              }
+        const orderedKeys = Array.from(stackKeys).sort();
+        let result = Object.entries(groups).map(([dim, stacks]) => {
+          const row: any = { name: dim };
+          let total = 0;
+          orderedKeys.forEach(k => {
+            const entry = stacks[k];
+            const val = entry ? (measure === 'avg' ? entry.sum / Math.max(entry.count, 1) : entry.sum) : 0;
+            row[k] = val;
+            total += val;
           });
-      });
+          row.total = total;
+          return row;
+        });
 
-      let result = Object.keys(groups).map(k => ({
-          name: k,
-          value: widget.measure === 'avg'
-            ? (groups[k] / widgetData.filter(r => String(r[widget.dimension]).includes(k)).length)
-            : groups[k]
-      }));
+        if (is100StackedChart(widget.type)) {
+          result = result.map(r => {
+            const total = r.total || 0;
+            if (total === 0) return r;
+            const next: any = { name: r.name };
+            orderedKeys.forEach(k => {
+              next[k] = ((r as any)[k] || 0) / total * 100;
+            });
+            next.total = 100;
+            return next;
+          });
+        }
 
-      // Apply category filter BEFORE sorting and limiting
-      if (widget.categoryFilter && widget.categoryFilter.length > 0) {
-        result = result.filter(item => widget.categoryFilter!.includes(item.name));
+        result = applySorting(result, widget.sortBy, 'total');
+        return { data: result, isStack: true, stackKeys: orderedKeys };
       }
 
-      // Apply sorting based on widget.sortBy
-      result = applySorting(result, widget.sortBy, 'value');
+      // 5) Single-series charts
+      if (widget.dimension) {
+        const groups: Record<string, { sum: number; count: number }> = {};
 
-      if (widget.barMode === 'percent') {
-          const total = result.reduce((acc, curr) => acc + (curr.value || 0), 0);
-          if (total > 0) {
-              result = result.map(item => ({ ...item, value: (item.value / total) * 100 }));
+        widgetData.forEach(row => {
+          const dimVal = String(row[widget.dimension!] || 'N/A');
+          if (!passCategory(dimVal)) return;
+          if (!groups[dimVal]) groups[dimVal] = { sum: 0, count: 0 };
+
+          if (measure === 'count') {
+            groups[dimVal].sum += 1;
+            groups[dimVal].count += 1;
+          } else if (widget.measureCol) {
+            const val = Number(row[widget.measureCol]) || 0;
+            groups[dimVal].sum += val;
+            groups[dimVal].count += 1;
           }
+        });
+
+        let result = Object.entries(groups).map(([name, agg]) => ({
+          name,
+          value: measure === 'avg' ? agg.sum / Math.max(agg.count, 1) : agg.sum
+        }));
+
+        result = applySorting(result, widget.sortBy, 'value');
+        return { data: result, isStack: false };
       }
 
-      // Legacy limit support (use categoryFilter instead for new widgets)
-      const limit = widget.limit || 20;
-
-      if (!widget.categoryFilter && result.length > limit) {
-          if (widget.type === 'wordcloud') {
-               result = result.slice(0, limit); 
-          } else {
-               const others = result.slice(limit).reduce((acc, curr) => acc + curr.value, 0);
-               result = result.slice(0, limit);
-               result.push({ name: 'Others', value: others });
-          }
-      }
-
-      return { data: result, isStack: false };
+      return { data: [], isStack: false };
   };
 
   // --- Multi-Series Data Processing (Google Sheets Style) ---
@@ -533,387 +561,293 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
     }
   };
 
+
   const renderWidget = (widget: DashboardWidget) => {
       try {
-        // Validation: Ensure widget has required fields
-        if (!widget.dimension && widget.type !== 'kpi') {
+        const needsDimension = !['kpi', 'table', 'scatter', 'bubble'].includes(widget.type);
+        if (needsDimension && !widget.dimension) {
           return <div className="flex items-center justify-center h-full text-gray-400 text-sm">Invalid widget: Missing dimension</div>;
         }
 
-        // NEW: Multi-Series Chart Rendering (Google Sheets Style)
-      if (widget.series && widget.series.length > 0 && widget.type !== 'pie' && widget.type !== 'kpi' && widget.type !== 'wordcloud' && widget.type !== 'table') {
-        const data = processMultiSeriesData(widget);
+        const { data, isStack, stackKeys } = processWidgetData(widget);
+        const palette = getPalette(widget);
+        const legendConfig: LegendConfig = widget.legend || { enabled: true, position: 'bottom', fontSize: 12, alignment: 'center' };
+        const dataLabelsConfig: DataLabelConfig = widget.dataLabels || { enabled: false, position: 'top', fontSize: 12, fontWeight: 'normal', color: '#111827' };
+        const xAxisConfig: AxisConfig = widget.xAxis || { fontSize: 12, fontColor: '#111827' };
+        const leftYAxisConfig: AxisConfig = widget.leftYAxis || { fontSize: 12, fontColor: '#111827' };
+        const rightYAxisConfig: AxisConfig = widget.rightYAxis || { fontSize: 12, fontColor: '#111827' };
+
         if (!data || data.length === 0) return <div className="flex items-center justify-center h-full text-gray-400 text-sm">No Data</div>;
 
-        const hasRightAxis = widget.series.some(s => s.yAxis === 'right');
-        const legendConfig = widget.legend || { enabled: true, position: 'bottom', fontSize: 11, fontColor: '#666666', alignment: 'center' };
-        const xAxisConfig = widget.xAxis || { fontSize: 11, fontColor: '#666666', slant: 0, showGridlines: true };
-        const leftYAxisConfig = widget.leftYAxis || { fontSize: 11, fontColor: '#666666', min: 'auto', max: 'auto', format: '#,##0', showGridlines: true };
-        const rightYAxisConfig = widget.rightYAxis || { fontSize: 11, fontColor: '#666666', min: 'auto', max: 'auto', format: '#,##0', showGridlines: false };
-        const dataLabelsConfig = widget.dataLabels || { enabled: false, position: 'top', fontSize: 11, fontWeight: 'normal', color: '#000000' };
-        const barOrientation = widget.barOrientation || 'vertical';
+        if (widget.type === 'table') {
+          return (
+            <div className="h-full overflow-auto w-full relative">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-gray-50 text-xs uppercase text-gray-500 sticky top-0 z-10">
+                  <tr>
+                    <th className="px-4 py-2">{widget.dimension || 'Column'}</th>
+                    {widget.measureCol && <th className="px-4 py-2 text-right">{widget.measureCol}</th>}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {(data as RawRow[]).map((row, idx) => (
+                    <tr key={idx} className="hover:bg-gray-50 text-gray-700">
+                      <td className="px-4 py-2 truncate max-w-[180px] font-medium" title={widget.dimension ? String(row[widget.dimension]) : ''}>
+                        {widget.dimension ? String(row[widget.dimension]) : ''}
+                      </td>
+                      {widget.measureCol && (
+                        <td className="px-4 py-2 text-right text-gray-500">{String(row[widget.measureCol])}</td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        }
 
-        return (
-          <div className="h-full flex flex-col">
-            {/* Chart Title */}
-            {widget.chartTitle && (
-              <div className="text-center mb-2">
-                <h3 className="text-base font-bold text-gray-900">{widget.chartTitle}</h3>
-                {widget.subtitle && <p className="text-xs text-gray-600">{widget.subtitle}</p>}
-              </div>
-            )}
+        if (widget.type === 'kpi') {
+          const total = (data as any[]).reduce((sum, row) => sum + (row.value || 0), 0);
+          const formattedTotal = formatWidgetValue(widget, total);
+          return (
+            <div className="flex flex-col items-center justify-center h-full pb-4">
+              <span className="text-4xl font-bold text-blue-600">{formattedTotal}</span>
+              <span className="text-gray-400 text-sm mt-2">{widget.title || 'KPI'}</span>
+            </div>
+          );
+        }
 
+        if (widget.type === 'wordcloud') {
+          const maxVal = (data as any[]).reduce((max, item) => (item.value > max ? item.value : max), 0);
+          const safeMax = maxVal > 0 ? maxVal : 1;
+          return (
+            <div className="flex flex-wrap content-center justify-center items-center h-full overflow-hidden p-2 gap-2">
+              {(data as any[]).map((item, idx) => {
+                const size = Math.max(12, Math.min(32, 12 + (item.value / safeMax) * 20));
+                const opacity = 0.6 + (item.value / safeMax) * 0.4;
+                return (
+                  <span
+                    key={idx}
+                    onClick={(e) => handleChartClick(e, widget, item.name)}
+                    className="cursor-pointer hover:scale-110 transition-transform px-1 leading-none select-none"
+                    style={{ fontSize: `${size}px`, color: palette[idx % palette.length], opacity }}
+                    title={`${item.name}: ${item.value}`}
+                  >
+                    {item.name}
+                  </span>
+                );
+              })}
+            </div>
+          );
+        }
+
+        if (isPieChart(widget.type)) {
+          return (
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart
-                data={data}
-                layout={barOrientation === 'horizontal' ? 'vertical' : 'horizontal'}
-              >
-                <CartesianGrid
-                  strokeDasharray="3 3"
-                  stroke="#f0f0f0"
-                />
-                {barOrientation === 'vertical' ? (
+              <PieChart>
+                <Pie
+                  data={data as any[]}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={widget.type === 'donut' ? `${widget.innerRadius || 50}%` : undefined}
+                  startAngle={widget.startAngle || 0}
+                  endAngle={(widget.startAngle || 0) + 360}
+                  label={dataLabelsConfig.enabled}
+                  onClick={(d, idx, e) => handleChartClick(e, widget, (d as any).name)}
+                >
+                  {(data as any[]).map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={getWidgetColor(widget, entry.name, index)} />
+                  ))}
+                </Pie>
+                <Tooltip />
+                {legendConfig.enabled && <Legend wrapperStyle={{ fontSize: legendConfig.fontSize }} />}
+              </PieChart>
+            </ResponsiveContainer>
+          );
+        }
+
+        if (widget.type === 'scatter' || widget.type === 'bubble') {
+          return (
+            <ResponsiveContainer width="100%" height="100%">
+              <ScatterChart>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                <XAxis dataKey="x" type="number" name={widget.xDimension || 'X'} />
+                <YAxis dataKey="y" type="number" name={widget.yDimension || 'Y'} />
+                {widget.type === 'bubble' && <ZAxis dataKey="z" range={[60, 400]} />}
+                <Tooltip cursor={{ strokeDasharray: '3 3' }} />
+                {legendConfig.enabled && <Legend wrapperStyle={{ fontSize: legendConfig.fontSize }} />}
+                <Scatter data={data as any[]} fill={palette[0]} />
+              </ScatterChart>
+            </ResponsiveContainer>
+          );
+        }
+
+        if (isMultiSeriesChart(widget.type) && widget.series && widget.series.length > 0) {
+          const layout = (widget.barOrientation || 'vertical') === 'horizontal' ? 'vertical' : 'horizontal';
+          return (
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={data as any[]} layout={layout} margin={{ top: 10, right: 20, left: 10, bottom: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                {layout === 'horizontal' ? (
                   <>
-                    <XAxis
-                      dataKey={widget.dimension}
-                      angle={xAxisConfig.slant || 0}
-                      textAnchor={xAxisConfig.slant ? 'end' : 'middle'}
-                      height={xAxisConfig.slant === 90 ? 100 : xAxisConfig.slant === 45 ? 80 : 60}
-                      tick={{ fontSize: xAxisConfig.fontSize, fill: xAxisConfig.fontColor }}
-                      label={xAxisConfig.title ? { value: xAxisConfig.title, position: 'insideBottom', offset: -5 } : undefined}
-                    />
-                    <YAxis
-                      yAxisId="left"
-                      tick={{ fontSize: leftYAxisConfig.fontSize, fill: leftYAxisConfig.fontColor }}
-                      label={leftYAxisConfig.title ? { value: leftYAxisConfig.title, angle: -90, position: 'insideLeft' } : undefined}
-                      domain={[
-                        leftYAxisConfig.min === 'auto' ? 'auto' : leftYAxisConfig.min,
-                        leftYAxisConfig.max === 'auto' ? 'auto' : leftYAxisConfig.max
-                      ]}
-                    />
-                    {hasRightAxis && (
-                      <YAxis
-                        yAxisId="right"
-                        orientation="right"
-                        tick={{ fontSize: rightYAxisConfig.fontSize, fill: rightYAxisConfig.fontColor }}
-                        label={rightYAxisConfig.title ? { value: rightYAxisConfig.title, angle: 90, position: 'insideRight' } : undefined}
-                        domain={[
-                          rightYAxisConfig.min === 'auto' ? 'auto' : rightYAxisConfig.min,
-                          rightYAxisConfig.max === 'auto' ? 'auto' : rightYAxisConfig.max
-                        ]}
-                      />
+                    <XAxis dataKey={widget.dimension!} angle={xAxisConfig.slant || 0} textAnchor={xAxisConfig.slant ? 'end' : 'middle'} height={xAxisConfig.slant === 90 ? 100 : xAxisConfig.slant === 45 ? 80 : 60} tick={{ fontSize: xAxisConfig.fontSize, fill: xAxisConfig.fontColor }} />
+                    <YAxis tick={{ fontSize: leftYAxisConfig.fontSize, fill: leftYAxisConfig.fontColor }} />
+                    {widget.series.some(s => s.yAxis === 'right') && (
+                      <YAxis yAxisId="right" orientation="right" tick={{ fontSize: rightYAxisConfig.fontSize, fill: rightYAxisConfig.fontColor }} />
                     )}
                   </>
                 ) : (
                   <>
-                    <XAxis
-                      type="number"
-                      tick={{ fontSize: leftYAxisConfig.fontSize, fill: leftYAxisConfig.fontColor }}
-                      label={leftYAxisConfig.title ? { value: leftYAxisConfig.title, position: 'insideBottom', offset: -5 } : undefined}
-                    />
-                    <YAxis
-                      type="category"
-                      dataKey={widget.dimension}
-                      tick={{ fontSize: xAxisConfig.fontSize, fill: xAxisConfig.fontColor }}
-                      label={xAxisConfig.title ? { value: xAxisConfig.title, angle: -90, position: 'insideLeft' } : undefined}
-                    />
+                    <XAxis type="number" tick={{ fontSize: leftYAxisConfig.fontSize, fill: leftYAxisConfig.fontColor }} />
+                    <YAxis type="category" dataKey={widget.dimension!} tick={{ fontSize: xAxisConfig.fontSize, fill: xAxisConfig.fontColor }} />
                   </>
                 )}
                 <Tooltip />
-                {legendConfig.enabled && (
-                  <RechartsLegend
-                    wrapperStyle={{ fontSize: legendConfig.fontSize }}
-                    verticalAlign={legendConfig.position === 'top' || legendConfig.position === 'bottom' ? legendConfig.position : 'bottom'}
-                    align={legendConfig.alignment || 'center'}
-                  />
-                )}
-
-                {widget.series.map((s, idx) => {
+                {legendConfig.enabled && <Legend wrapperStyle={{ fontSize: legendConfig.fontSize }} />}
+                {widget.series.map((s) => {
                   const Component = s.type === 'line' ? Line : s.type === 'area' ? Area : Bar;
-                  const barProps = s.type === 'bar' && widget.type === 'stacked-bar' ? { stackId: 'stack' } : {};
+                  const stackProps = s.type === 'bar' && isStackedChart(widget.type) ? { stackId: 'stack' } : {};
                   return (
                     <Component
                       key={s.id}
-                      yAxisId={barOrientation === 'vertical' ? s.yAxis : undefined}
-                      type="monotone"
                       dataKey={s.id}
                       name={s.label}
+                      type="monotone"
+                      yAxisId={layout === 'horizontal' ? s.yAxis : undefined}
                       fill={s.color}
                       stroke={s.color}
-                      fillOpacity={s.type === 'area' ? 0.3 : 1}
-                      strokeWidth={s.type === 'line' ? 2 : 0}
-                      onClick={(barData: any) => handleChartClick(null, widget, barData[widget.dimension])}
-                      className="cursor-pointer"
-                      {...barProps}
+                      strokeWidth={s.type === 'line' ? 2 : 1}
+                      fillOpacity={s.type === 'area' ? 0.35 : 1}
+                      {...stackProps}
                     >
                       {dataLabelsConfig.enabled && (
-                        <LabelList
-                          dataKey={s.id}
-                          position={dataLabelsConfig.position as any}
-                          style={{
-                            fontSize: dataLabelsConfig.fontSize,
-                            fontWeight: dataLabelsConfig.fontWeight,
-                            fill: dataLabelsConfig.color
-                          }}
-                        />
+                        <LabelList dataKey={s.id} position={dataLabelsConfig.position as any} style={{ fontSize: dataLabelsConfig.fontSize, fontWeight: dataLabelsConfig.fontWeight, fill: dataLabelsConfig.color }} />
                       )}
                     </Component>
                   );
                 })}
               </ComposedChart>
             </ResponsiveContainer>
+          );
+        }
+
+        if (isAreaChart(widget.type)) {
+          const layout = isHorizontalChart(widget.type) ? 'vertical' : 'horizontal';
+          const keys = stackKeys && stackKeys.length > 0 ? stackKeys : ['value'];
+          const stackId = isStack ? 'stack' : undefined;
+          const curve = widget.curveType || 'monotone';
+          const stroke = widget.strokeWidth || 2;
+          return (
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={data as any[]} layout={layout}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                {layout === 'horizontal' ? (
+                  <>
+                    <XAxis dataKey="name" angle={xAxisConfig.slant || 0} textAnchor={xAxisConfig.slant ? 'end' : 'middle'} height={xAxisConfig.slant === 90 ? 100 : xAxisConfig.slant === 45 ? 80 : 60} tick={{ fontSize: xAxisConfig.fontSize, fill: xAxisConfig.fontColor }} />
+                    <YAxis tick={{ fontSize: leftYAxisConfig.fontSize, fill: leftYAxisConfig.fontColor }} />
+                  </>
+                ) : (
+                  <>
+                    <XAxis type="number" tick={{ fontSize: leftYAxisConfig.fontSize, fill: leftYAxisConfig.fontColor }} />
+                    <YAxis type="category" dataKey="name" tick={{ fontSize: xAxisConfig.fontSize, fill: xAxisConfig.fontColor }} />
+                  </>
+                )}
+                <Tooltip />
+                {legendConfig.enabled && <Legend wrapperStyle={{ fontSize: legendConfig.fontSize }} />}
+                {keys.map((key, idx) => (
+                  <Area
+                    key={key}
+                    dataKey={key}
+                    stackId={stackId}
+                    type={curve}
+                    stroke={getWidgetColor(widget, key, idx)}
+                    fill={getWidgetColor(widget, key, idx)}
+                    fillOpacity={0.35}
+                    strokeWidth={stroke}
+                  >
+                    {dataLabelsConfig.enabled && (
+                      <LabelList dataKey={key} position={dataLabelsConfig.position as any} style={{ fontSize: dataLabelsConfig.fontSize, fontWeight: dataLabelsConfig.fontWeight, fill: dataLabelsConfig.color }} />
+                    )}
+                  </Area>
+                ))}
+              </AreaChart>
+            </ResponsiveContainer>
+          );
+        }
+
+        if (isLineChart(widget.type)) {
+          const curve = widget.type === 'smooth-line' ? 'monotone' : widget.curveType || 'linear';
+          const stroke = widget.strokeWidth || 2;
+          return (
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={data as any[]}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                <XAxis dataKey="name" angle={xAxisConfig.slant || 0} textAnchor={xAxisConfig.slant ? 'end' : 'middle'} height={xAxisConfig.slant === 90 ? 100 : xAxisConfig.slant === 45 ? 80 : 60} tick={{ fontSize: xAxisConfig.fontSize, fill: xAxisConfig.fontColor }} />
+                <YAxis tick={{ fontSize: leftYAxisConfig.fontSize, fill: leftYAxisConfig.fontColor }} />
+                <Tooltip />
+                {legendConfig.enabled && <Legend wrapperStyle={{ fontSize: legendConfig.fontSize }} />}
+                <Line type={curve} dataKey="value" stroke={palette[0]} strokeWidth={stroke} dot={{ r: 4 }}>
+                  {dataLabelsConfig.enabled && (
+                    <LabelList dataKey="value" position={dataLabelsConfig.position as any} style={{ fontSize: dataLabelsConfig.fontSize, fontWeight: dataLabelsConfig.fontWeight, fill: dataLabelsConfig.color }} />
+                  )}
+                </Line>
+              </LineChart>
+            </ResponsiveContainer>
+          );
+        }
+
+        const layout = isHorizontalChart(widget.type) ? 'vertical' : 'horizontal';
+        const keys = stackKeys && stackKeys.length > 0 ? stackKeys : ['value'];
+        const stackId = isStack ? 'stack' : undefined;
+        return (
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={data as any[]} layout={layout}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+              {layout === 'horizontal' ? (
+                <>
+                  <XAxis dataKey="name" angle={xAxisConfig.slant || 0} textAnchor={xAxisConfig.slant ? 'end' : 'middle'} height={xAxisConfig.slant === 90 ? 100 : xAxisConfig.slant === 45 ? 80 : 60} tick={{ fontSize: xAxisConfig.fontSize, fill: xAxisConfig.fontColor }} />
+                  <YAxis tick={{ fontSize: leftYAxisConfig.fontSize, fill: leftYAxisConfig.fontColor }} />
+                </>
+              ) : (
+                <>
+                  <XAxis type="number" tick={{ fontSize: leftYAxisConfig.fontSize, fill: leftYAxisConfig.fontColor }} />
+                  <YAxis type="category" dataKey="name" tick={{ fontSize: xAxisConfig.fontSize, fill: xAxisConfig.fontColor }} />
+                </>
+              )}
+              <Tooltip />
+              {legendConfig.enabled && <Legend wrapperStyle={{ fontSize: legendConfig.fontSize }} />}
+              {keys.map((key, idx) => (
+                <Bar key={key} dataKey={key} stackId={stackId} onClick={(barData: any, index: number, e: any) => handleChartClick(e, widget, barData.name)} fill={getWidgetColor(widget, key, idx)}>
+                  {dataLabelsConfig.enabled && (
+                    <LabelList dataKey={key} position={dataLabelsConfig.position as any} style={{ fontSize: dataLabelsConfig.fontSize, fontWeight: dataLabelsConfig.fontWeight, fill: dataLabelsConfig.color }} />
+                  )}
+                </Bar>
+              ))}
+            </BarChart>
+          </ResponsiveContainer>
+        );
+      } catch (error) {
+        console.error('Error rendering widget:', widget.id, error);
+        return (
+          <div className="flex flex-col items-center justify-center h-full text-red-500 text-sm p-4">
+            <p className="font-bold mb-2">Error rendering chart</p>
+            <p className="text-xs text-gray-600 mb-4">{widget.title}</p>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (confirm('This chart has errors. Delete it?')) {
+                  handleDeleteWidget(e, widget.id);
+                }
+              }}
+              className="px-3 py-1.5 bg-red-600 text-white rounded text-xs hover:bg-red-700"
+            >
+              Delete Chart
+            </button>
           </div>
         );
       }
-
-      // LEGACY: Single-series chart rendering
-      const { data, isStack, stackKeys } = processWidgetData(widget);
-      const palette = getPalette(widget);
-      const showLegend = widget.showLegend !== false;
-      const showValues = widget.showValues !== false;
-      const isPercentMode = widget.barMode === 'percent';
-      const formatTick = (val: number) => isPercentMode ? `${val.toFixed(1)}%` : formatWidgetValue(widget, val);
-      const labelFormatter = (val: number) => isPercentMode ? `${val.toFixed(1)}%` : formatWidgetValue(widget, Number(val) || 0);
-
-      if (!data || data.length === 0) return <div className="flex items-center justify-center h-full text-gray-400 text-sm">No Data</div>;
-
-      switch (widget.type) {
-          case 'bar':
-              const isHorizontal = (widget.barOrientation || 'horizontal') === 'horizontal';
-              const layout = isHorizontal ? 'vertical' : 'horizontal';
-              const legendConfig = {
-                  top: { verticalAlign: 'top' as const, align: 'center' as const },
-                  bottom: { verticalAlign: 'bottom' as const, align: 'center' as const },
-                  left: { verticalAlign: 'middle' as const, align: 'left' as const, layout: 'vertical' as const },
-                  right: { verticalAlign: 'middle' as const, align: 'right' as const, layout: 'vertical' as const },
-              };
-              const legendPlacement = legendConfig[widget.legendPosition || 'bottom'];
-              return (
-                  <ResponsiveContainer width="100%" height="100%">
-                          <BarChart
-                            data={data as any[]}
-                            layout={layout}
-                            margin={{ left: 20, right: 20 }}
-                          >
-                              {widget.showGrid !== false && (
-                                <CartesianGrid
-                                    strokeDasharray="3 3"
-                                    horizontal={!isHorizontal}
-                                    vertical={isHorizontal}
-                                    stroke="#f3f4f6"
-                                />
-                              )}
-                          {isHorizontal ? (
-                            <>
-                              <XAxis type="number" tickFormatter={formatTick} />
-                              <YAxis dataKey="name" type="category" width={100} tick={{fontSize: 11}} interval={0} />
-                            </>
-                          ) : (
-                            <>
-                              <XAxis dataKey="name" type="category" tick={{fontSize: 11}} interval={0} />
-                              <YAxis type="number" tickFormatter={formatTick} width={80} />
-                            </>
-                          )}
-                          <Tooltip contentStyle={{borderRadius: '8px'}} cursor={{fill: '#f3f4f6'}} formatter={(val: any, name: any) => [labelFormatter(Number(val) || 0), name]} />
-                          {showLegend && <Legend {...legendPlacement} iconType="circle" wrapperStyle={{fontSize: '11px'}} />}
-
-                          {stackKeys && stackKeys.length ? (
-                              stackKeys.map((key, idx) => (
-                                  <Bar
-                                    key={key}
-                                    dataKey={key}
-                                    stackId={isStack ? 'a' : undefined}
-                                    fill={getWidgetColor(widget, key, idx)}
-                                    radius={isHorizontal ? [0,0,0,0] : [4,4,0,0]}
-                                    barSize={22}
-                                    onClick={(barData: any, index: number, e: any) => handleChartClick(e, widget, barData.name)}
-                                    className="cursor-pointer"
-                                  >
-                                      {showValues && <LabelList dataKey={key} position={isHorizontal ? 'right' : 'top'} formatter={labelFormatter} />}
-                                  </Bar>
-                              ))
-                          ) : (
-                                <Bar
-                                    dataKey="value"
-                                    fill={widget.color || palette[0] || '#3B82F6'}
-                                    radius={isHorizontal ? [0, 4, 4, 0] : [4, 4, 0, 0]}
-                                    barSize={22}
-                                    className="cursor-pointer"
-                                    onClick={(barData: any, index: number, e: any) => handleChartClick(e, widget, barData.name)}
-                                >
-                                    {(data as any[]).map((entry, idx) => (
-                                        <Cell key={entry.name} fill={getWidgetColor(widget, entry.name, idx)} />
-                                    ))}
-                                    {showValues && <LabelList dataKey="value" position={isHorizontal ? 'right' : 'top'} formatter={labelFormatter} />}
-                                </Bar>
-                          )}
-                      </BarChart>
-                  </ResponsiveContainer>
-              );
-          case 'pie':
-              return (
-                  <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                          <Pie
-                              data={data as any[]}
-                              cx="50%"
-                              cy="50%"
-                              innerRadius={60}
-                              outerRadius={80}
-                              paddingAngle={5}
-                              dataKey="value"
-                              className="cursor-pointer outline-none"
-                              onClick={(data, index, e) => handleChartClick(e, widget, data.name)}
-                              label={showValues ? ({ name, value }) => `${name}: ${formatWidgetValue(widget, Number(value) || 0)}` : false}
-                              labelLine={showValues}
-                          >
-                              {(data as any[]).map((entry, index) => (
-                                  <Cell key={`cell-${index}`} fill={getWidgetColor(widget, entry.name, index)} />
-                              ))}
-                          </Pie>
-                          <Tooltip contentStyle={{borderRadius: '8px'}} />
-                          {showLegend && <Legend iconType="circle" wrapperStyle={{fontSize: '12px'}} />}
-                      </PieChart>
-                  </ResponsiveContainer>
-              );
-          case 'line':
-          case 'area':
-               const sortedData = [...(data as any[])].sort((a,b) => a.name.localeCompare(b.name));
-               const ChartComp = widget.type === 'line' ? LineChart : AreaChart;
-               const DataComp = widget.type === 'line' ? Line : Area;
-               const primaryColor = widget.color || palette[0] || '#3B82F6';
-               return (
-                  <ResponsiveContainer width="100%" height="100%">
-                      <ChartComp
-                        data={sortedData}
-                        margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
-                        onClick={(e) => e && e.activeLabel && handleChartClick(null, widget, e.activeLabel)}
-                      >
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                          <XAxis dataKey="name" tick={{fontSize: 11}} />
-                          <YAxis tick={{fontSize: 11}} tickFormatter={(val) => formatWidgetValue(widget, Number(val) || 0)} />
-                          <Tooltip contentStyle={{borderRadius: '8px'}} />
-                          <DataComp
-                            type="monotone"
-                            dataKey="value"
-                            stroke={primaryColor}
-                            fill={primaryColor}
-                            fillOpacity={0.2}
-                            strokeWidth={2}
-                            dot={{r: 4}}
-                            activeDot={{r: 6}}
-                            className="cursor-pointer"
-                          >
-                              {showValues && <LabelList dataKey="value" position="top" formatter={(val: number) => formatWidgetValue(widget, Number(val) || 0)} />}
-                          </DataComp>
-                          {showLegend && <Legend iconType="circle" wrapperStyle={{fontSize: '12px'}} />}
-                      </ChartComp>
-                  </ResponsiveContainer>
-               );
-           case 'kpi':
-               const total = (data as any[]).reduce((acc, curr) => acc + curr.value, 0);
-               const formattedTotal = formatWidgetValue(widget, total);
-               return (
-                   <div className="flex flex-col items-center justify-center h-full pb-4">
-                       <span className="text-4xl font-bold text-blue-600">{formattedTotal}</span>
-                       <span className="text-gray-400 text-sm mt-2">
-                          {widget.dimension ? `${widget.measure} of ${widget.dimension}` : `Total ${widget.measure === 'count' ? 'Rows' : 'Value'}`}
-                       </span>
-                   </div>
-               );
-           case 'wordcloud':
-               // Use reduce to avoid stack overflow on large arrays
-               const maxVal = (data as any[]).reduce((max, item) => (item.value > max ? item.value : max), 0);
-               
-               return (
-                   <div className="flex flex-wrap content-center justify-center items-center h-full overflow-hidden p-2 gap-2">
-                       {(data as any[]).map((item, idx) => {
-                           // Avoid division by zero
-                           const safeMax = maxVal > 0 ? maxVal : 1;
-                           const size = Math.max(12, Math.min(32, 12 + (item.value / safeMax) * 20));
-                           const opacity = 0.6 + (item.value / safeMax) * 0.4;
-                           
-                           return (
-                               <span 
-                                   key={idx} 
-                                   onClick={(e) => handleChartClick(e, widget, item.name)}
-                                   className="cursor-pointer hover:scale-110 transition-transform px-1 leading-none select-none"
-                                   style={{ 
-                                       fontSize: `${size}px`, 
-                                       color: COLORS[idx % COLORS.length],
-                                       opacity 
-                                   }}
-                                   title={`${item.name}: ${item.value}`}
-                               >
-                                   {item.name}
-                               </span>
-                           );
-                       })}
-                   </div>
-               );
-           case 'table':
-               return (
-                   <div className="h-full overflow-auto w-full relative">
-                       <table className="w-full text-left text-sm">
-                           <thead className="bg-gray-50 text-xs uppercase text-gray-500 sticky top-0 z-10">
-                               <tr>
-                                   <th className="px-4 py-2">{widget.dimension}</th>
-                                   {widget.measureCol && <th className="px-4 py-2 text-right">{widget.measureCol}</th>}
-                                   <th className="px-4 py-2 text-right">...</th>
-                               </tr>
-                           </thead>
-                           <tbody className="divide-y divide-gray-100">
-                               {(data as RawRow[]).map((row, idx) => (
-                                   <tr key={idx} className="hover:bg-gray-50 text-gray-700">
-                                       <td className="px-4 py-2 truncate max-w-[150px] font-medium" title={String(row[widget.dimension])}>
-                                           {String(row[widget.dimension])}
-                                       </td>
-                                       {widget.measureCol && (
-                                           <td className="px-4 py-2 text-right text-gray-500">
-                                               {String(row[widget.measureCol])}
-                                           </td>
-                                       )}
-                                       <td className="px-4 py-2 text-right">
-                                           <button onClick={(e) => {
-                                               e.stopPropagation();
-                                               setDrillDown({
-                                                   isOpen: true, 
-                                                   title: 'Record Details', 
-                                                   filterCol: 'ID', 
-                                                   filterVal: String(idx), 
-                                                   data: [row]
-                                               });
-                                           }} className="text-blue-500 hover:underline text-xs">View</button>
-                                       </td>
-                                   </tr>
-                               ))}
-                           </tbody>
-                       </table>
-                   </div>
-               );
-          default:
-              return null;
-      }
-    } catch (error) {
-      console.error('Error rendering widget:', widget.id, error);
-      return (
-        <div className="flex flex-col items-center justify-center h-full text-red-500 text-sm p-4">
-          <p className="font-bold mb-2">Error rendering chart</p>
-          <p className="text-xs text-gray-600 mb-4">{widget.title}</p>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              if (confirm('This chart has errors. Delete it?')) {
-                handleDeleteWidget(e, widget.id);
-              }
-            }}
-            className="px-3 py-1.5 bg-red-600 text-white rounded text-xs hover:bg-red-700"
-          >
-            Delete Chart
-          </button>
-        </div>
-      );
-    }
   };
 
   if (baseData.length === 0) {

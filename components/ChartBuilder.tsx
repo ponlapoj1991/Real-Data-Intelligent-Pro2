@@ -34,10 +34,21 @@ import {
 } from '../types';
 import ChartTypeSelector from './ChartTypeSelector';
 import ChartConfigForm from './ChartConfigForm';
-import { getDefaultOrientation } from '../utils/chartConfigHelpers';
+import {
+  getDefaultOrientation,
+  isStackedChart,
+  is100StackedChart,
+  isHorizontalChart,
+  isVerticalChart,
+  isAreaChart,
+  isPieChart,
+  isLineChart
+} from '../utils/chartConfigHelpers';
 import {
   ResponsiveContainer,
   ComposedChart,
+  LineChart,
+  AreaChart,
   Bar,
   Line,
   Area,
@@ -50,7 +61,10 @@ import {
   PieChart,
   Pie,
   Cell,
-  BarChart
+  BarChart,
+  ScatterChart,
+  Scatter,
+  ZAxis
 } from 'recharts';
 
 interface ChartBuilderProps {
@@ -484,131 +498,579 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
     return Array.from(unique).sort();
   }, [dimension, data]);
 
-  // Aggregate data for preview
+  // Aggregate data for preview (รองรับ 23 ประเภทใหม่)
   const previewData = useMemo(() => {
-    if (!dimension || data.length === 0) return [];
+    if (!type) return [];
+    const rows = data || [];
 
-    // For multi-series (Combo chart & Stacked bar)
-    if ((type === 'combo' || type === 'stacked-bar') && series.length > 0) {
+    // Category filter helper
+    const passCategory = (dimValue: string) => {
+      if (categoryFilter.length === 0) return true;
+      return categoryFilter.includes(dimValue);
+    };
+
+    // 1) Multi-series (Combo)
+    if (type === 'combo' && series.length > 0 && dimension) {
       const groups: Record<string, any> = {};
 
-      data.forEach(row => {
-        const dimValue = String(row[dimension] || 'N/A');
+      series.forEach(s => {
+        rows.forEach(row => {
+          const dimValue = String(row[dimension] || 'N/A');
+          if (!passCategory(dimValue)) return;
+          if (!groups[dimValue]) groups[dimValue] = { name: dimValue };
 
-        // Apply category filter
-        if (categoryFilter.length > 0 && !categoryFilter.includes(dimValue)) {
-          return;
-        }
-
-        if (!groups[dimValue]) {
-          groups[dimValue] = { name: dimValue };
-        }
-
-        // Calculate each series
-        series.forEach(s => {
           if (s.measure === 'count') {
             groups[dimValue][s.id] = (groups[dimValue][s.id] || 0) + 1;
           } else if (s.measure === 'sum' && s.measureCol) {
             const val = parseFloat(String(row[s.measureCol])) || 0;
             groups[dimValue][s.id] = (groups[dimValue][s.id] || 0) + val;
           } else if (s.measure === 'avg' && s.measureCol) {
-            if (!groups[dimValue][`${s.id}_sum`]) {
-              groups[dimValue][`${s.id}_sum`] = 0;
-              groups[dimValue][`${s.id}_count`] = 0;
+            const keySum = `${s.id}_sum`;
+            const keyCount = `${s.id}_count`;
+            if (!groups[dimValue][keySum]) {
+              groups[dimValue][keySum] = 0;
+              groups[dimValue][keyCount] = 0;
             }
             const val = parseFloat(String(row[s.measureCol])) || 0;
-            groups[dimValue][`${s.id}_sum`] += val;
-            groups[dimValue][`${s.id}_count`]++;
+            groups[dimValue][keySum] += val;
+            groups[dimValue][keyCount] += 1;
           }
         });
       });
 
-      // Finalize averages
-      series.forEach(s => {
-        if (s.measure === 'avg') {
-          Object.keys(groups).forEach(k => {
-            const count = groups[k][`${s.id}_count`] || 0;
-            if (count > 0) {
-              groups[k][s.id] = groups[k][`${s.id}_sum`] / count;
-            }
-          });
+      Object.values(groups).forEach((row: any) => {
+        series.forEach(s => {
+          if (s.measure === 'avg') {
+            const keySum = `${s.id}_sum`;
+            const keyCount = `${s.id}_count`;
+            const count = row[keyCount] || 0;
+            row[s.id] = count > 0 ? row[keySum] / count : 0;
+            delete row[keySum];
+            delete row[keyCount];
+          }
+        });
+      });
+
+      return applySorting(Object.values(groups), sortBy, series[0]?.id || 'value');
+    }
+
+    // 2) Scatter / Bubble
+    if ((type === 'scatter' || type === 'bubble') && xDimension && yDimension) {
+      return rows
+        .map(row => {
+          const xVal = Number(row[xDimension]);
+          const yVal = Number(row[yDimension]);
+          if (Number.isNaN(xVal) || Number.isNaN(yVal)) return null;
+          const sizeVal = sizeDimension ? Number(row[sizeDimension]) : undefined;
+          const colorVal = colorBy ? String(row[colorBy]) : undefined;
+          const nameVal = dimension ? String(row[dimension] || 'N/A') : undefined;
+          return {
+            x: xVal,
+            y: yVal,
+            z: sizeVal,
+            name: nameVal,
+            colorKey: colorVal
+          };
+        })
+        .filter(Boolean) as any[];
+    }
+
+    // 3) Stacked charts
+    if (isStackedChart(type) && dimension && stackBy) {
+      const groups: Record<string, Record<string, { sum: number; count: number }>> = {};
+      const stackKeys = new Set<string>();
+
+      rows.forEach(row => {
+        const dimValue = String(row[dimension] || 'N/A');
+        const stackValue = String(row[stackBy] || 'อื่นๆ');
+        if (!passCategory(dimValue)) return;
+
+        stackKeys.add(stackValue);
+        if (!groups[dimValue]) groups[dimValue] = {};
+        if (!groups[dimValue][stackValue]) groups[dimValue][stackValue] = { sum: 0, count: 0 };
+
+        if (measure === 'count') {
+          groups[dimValue][stackValue].sum += 1;
+          groups[dimValue][stackValue].count += 1;
+        } else if (measureCol) {
+          const val = Number(row[measureCol]) || 0;
+          groups[dimValue][stackValue].sum += val;
+          groups[dimValue][stackValue].count += 1;
         }
       });
 
-      let result = Object.values(groups);
+      const orderedKeys = Array.from(stackKeys).sort();
+      let result = Object.entries(groups).map(([dim, stacks]) => {
+        const row: any = { name: dim };
+        let total = 0;
+        orderedKeys.forEach(key => {
+          const entry = stacks[key];
+          const val = entry ? (measure === 'avg' ? entry.sum / Math.max(entry.count, 1) : entry.sum) : 0;
+          row[key] = val;
+          total += val;
+        });
+        row.total = total;
+        return row;
+      });
 
-      // Apply sorting
-      result = applySorting(result, sortBy, series.length > 0 ? series[0].id : 'value');
-
-      // Normalize to 100% for stacked bar
-      if (type === 'stacked-bar') {
-        result = result.map(row => {
-          const total = series.reduce((sum, s) => sum + (row[s.id] || 0), 0);
-          if (total > 0) {
-            const normalized: any = { name: row.name };
-            series.forEach(s => {
-              normalized[s.id] = ((row[s.id] || 0) / total) * 100;
-            });
-            return normalized;
-          }
-          return row;
+      if (is100StackedChart(type)) {
+        result = result.map(r => {
+          const total = r.total || 0;
+          if (total === 0) return r;
+          const next: any = { name: r.name };
+          orderedKeys.forEach(key => {
+            next[key] = ((r as any)[key] || 0) / total * 100;
+          });
+          next.total = 100;
+          return next;
         });
       }
 
+      return applySorting(result, sortBy, 'total');
+    }
+
+    // 4) Single-series charts (column/line/area/pie/donut/kpi/wordcloud)
+    if (dimension) {
+      const groups: Record<string, { sum: number; count: number }> = {};
+
+      rows.forEach(row => {
+        const dimValue = String(row[dimension] || 'N/A');
+        if (!passCategory(dimValue)) return;
+        if (!groups[dimValue]) groups[dimValue] = { sum: 0, count: 0 };
+
+        if (measure === 'count') {
+          groups[dimValue].sum += 1;
+          groups[dimValue].count += 1;
+        } else if (measureCol) {
+          const val = Number(row[measureCol]) || 0;
+          groups[dimValue].sum += val;
+          groups[dimValue].count += 1;
+        }
+      });
+
+      let result = Object.entries(groups).map(([name, agg]) => ({
+        name,
+        value: measure === 'avg' ? agg.sum / Math.max(agg.count, 1) : agg.sum
+      }));
+
+      result = applySorting(result, sortBy, 'value');
       return result;
     }
 
-    // For single-series (legacy)
-    const groups: Record<string, number> = {};
+    return [];
+  }, [
+    type,
+    data,
+    series,
+    dimension,
+    measure,
+    measureCol,
+    stackBy,
+    categoryFilter,
+    sortBy,
+    xDimension,
+    yDimension,
+    sizeDimension,
+    colorBy
+  ]);
 
-    data.forEach(row => {
-      const dimValue = String(row[dimension] || 'N/A');
-
-      // Apply category filter
-      if (categoryFilter.length > 0 && !categoryFilter.includes(dimValue)) {
-        return;
-      }
-
-      if (!groups[dimValue]) groups[dimValue] = 0;
-
-      if (measure === 'count') {
-        groups[dimValue]++;
-      } else if (measure === 'sum' && measureCol) {
-        const val = parseFloat(String(row[measureCol])) || 0;
-        groups[dimValue] += val;
-      } else if (measure === 'avg' && measureCol) {
-        if (!groups[`${dimValue}_sum`]) {
-          groups[`${dimValue}_sum`] = 0;
-          groups[`${dimValue}_count`] = 0;
-        }
-        const val = parseFloat(String(row[measureCol])) || 0;
-        groups[`${dimValue}_sum`] += val;
-        groups[`${dimValue}_count`]++;
-      }
-    });
-
-    // Finalize averages
-    if (measure === 'avg') {
-      Object.keys(groups).filter(k => !k.includes('_')).forEach(k => {
-        const count = groups[`${k}_count`] || 0;
-        if (count > 0) {
-          groups[k] = groups[`${k}_sum`] / count;
-        }
+  const previewStackKeys = useMemo(() => {
+    if (!isStackedChart(type || 'column')) return [] as string[];
+    const keys = new Set<string>();
+    (previewData as any[]).forEach(row => {
+      Object.keys(row).forEach(k => {
+        if (k !== 'name' && k !== 'total') keys.add(k);
       });
+    });
+    return Array.from(keys).sort();
+  }, [previewData, type]);
+
+  const renderPreviewChart = () => {
+    if (!type) return null;
+
+    if (type === 'kpi') {
+      const total = (previewData as any[]).reduce((sum, row) => sum + (row.value || 0), 0);
+      return (
+        <div className="flex flex-col items-center justify-center h-full">
+          <p className="text-4xl font-bold text-blue-600">{total.toLocaleString()}</p>
+          <p className="text-sm text-gray-500 mt-1">KPI Preview</p>
+        </div>
+      );
     }
 
-    let result = Object.keys(groups)
-      .filter(k => !k.includes('_'))
-      .map(k => ({
-        name: k,
-        value: groups[k]
-      }));
+    if (type === 'wordcloud') {
+      const maxVal = (previewData as any[]).reduce((max, item) => (item.value > max ? item.value : max), 0);
+      const safeMax = maxVal > 0 ? maxVal : 1;
+      return (
+        <div className="flex flex-wrap gap-2 p-2 items-center justify-center">
+          {(previewData as any[]).map((item, idx) => {
+            const size = Math.max(12, Math.min(30, 12 + (item.value / safeMax) * 18));
+            return (
+              <span
+                key={idx}
+                className="select-none"
+                style={{ fontSize: `${size}px`, color: COLORS[idx % COLORS.length] }}
+              >
+                {item.name}
+              </span>
+            );
+          })}
+        </div>
+      );
+    }
 
-    // Apply sorting
-    result = applySorting(result, sortBy, 'value');
+    if (type === 'table') {
+      return (
+        <div className="overflow-auto max-h-80">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-3 py-2 text-left">{dimension || 'Column'}</th>
+                {measureCol && <th className="px-3 py-2 text-right">{measureCol}</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {(previewData as any[]).slice(0, 8).map((row, idx) => (
+                <tr key={idx} className="odd:bg-white even:bg-gray-50">
+                  <td className="px-3 py-2">{row.name}</td>
+                  {measureCol && <td className="px-3 py-2 text-right">{row.value}</td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
 
-    return result;
-  }, [dimension, measure, measureCol, data, type, series, categoryFilter, sortBy]);
+    // Pie / Donut
+    if (isPieChart(type)) {
+      return (
+        <PieChart>
+          <Pie
+            data={previewData}
+            dataKey="value"
+            nameKey="name"
+            cx="50%"
+            cy="50%"
+            innerRadius={type === 'donut' ? `${innerRadius}%` : undefined}
+            startAngle={startAngle}
+            endAngle={startAngle + 360}
+            label={dataLabels.enabled}
+            onDoubleClick={(data: any) => handleBarDoubleClick(data.name)}
+            style={{ cursor: 'pointer', outline: 'none' }}
+          >
+            {previewData.map((entry: any, index) => (
+              <Cell
+                key={`cell-${index}`}
+                fill={categoryConfig[entry.name]?.color || COLORS[index % COLORS.length]}
+              />
+            ))}
+          </Pie>
+          {legend.enabled && <RechartsLegend />}
+          <Tooltip />
+        </PieChart>
+      );
+    }
+
+    // Scatter / Bubble
+    if (type === 'scatter' || type === 'bubble') {
+      return (
+        <ScatterChart>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          <XAxis dataKey="x" type="number" name={xDimension || 'X'} />
+          <YAxis dataKey="y" type="number" name={yDimension || 'Y'} />
+          {type === 'bubble' && <ZAxis dataKey="z" range={[60, 400]} />}
+          <Tooltip cursor={{ strokeDasharray: '3 3' }} />
+          {legend.enabled && <RechartsLegend />}
+          <Scatter
+            data={previewData}
+            name={dimension || 'Series'}
+            fill={COLORS[0]}
+          >
+            {dataLabels.enabled && (
+              <LabelList
+                dataKey="name"
+                position="top"
+                style={{
+                  fontSize: dataLabels.fontSize,
+                  fontWeight: dataLabels.fontWeight,
+                  fill: dataLabels.color
+                }}
+              />
+            )}
+          </Scatter>
+        </ScatterChart>
+      );
+    }
+
+    // Combo (multi-series)
+    if (type === 'combo' && series.length > 0) {
+      const layout = barOrientation === 'horizontal' ? 'vertical' : 'horizontal';
+      return (
+        <ComposedChart data={previewData} layout={layout}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          {layout === 'horizontal' ? (
+            <>
+              <XAxis
+                dataKey="name"
+                angle={xAxis.slant || 0}
+                textAnchor={xAxis.slant ? 'end' : 'middle'}
+                height={xAxis.slant === 90 ? 100 : xAxis.slant === 45 ? 80 : 60}
+                tick={{ fontSize: xAxis.fontSize, fill: xAxis.fontColor }}
+              />
+              <YAxis
+                yAxisId="left"
+                tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }}
+                domain={[
+                  leftYAxis.min === 'auto' ? 'auto' : leftYAxis.min,
+                  leftYAxis.max === 'auto' ? 'auto' : leftYAxis.max
+                ]}
+              />
+              {series.some(s => s.yAxis === 'right') && (
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  tick={{ fontSize: rightYAxis.fontSize, fill: rightYAxis.fontColor }}
+                  domain={[
+                    rightYAxis.min === 'auto' ? 'auto' : rightYAxis.min,
+                    rightYAxis.max === 'auto' ? 'auto' : rightYAxis.max
+                  ]}
+                />
+              )}
+            </>
+          ) : (
+            <>
+              <XAxis type="number" tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }} />
+              <YAxis
+                type="category"
+                dataKey="name"
+                tick={{ fontSize: xAxis.fontSize, fill: xAxis.fontColor }}
+              />
+            </>
+          )}
+          <Tooltip />
+          {legend.enabled && <RechartsLegend />}
+
+          {series.map((s) => {
+            const Component = s.type === 'line' ? Line : s.type === 'area' ? Area : Bar;
+            const extraProps = s.type === 'bar' && isStackedChart(type) ? { stackId: 'stack' } : {};
+            return (
+              <Component
+                key={s.id}
+                yAxisId={layout === 'horizontal' ? s.yAxis : undefined}
+                type="monotone"
+                dataKey={s.id}
+                name={s.label}
+                fill={s.color}
+                stroke={s.color}
+                strokeWidth={s.type === 'line' ? 2 : 1}
+                fillOpacity={s.type === 'area' ? 0.35 : 1}
+                {...extraProps}
+              >
+                {dataLabels.enabled && (
+                  <LabelList
+                    dataKey={s.id}
+                    position={dataLabels.position as any}
+                    style={{
+                      fontSize: dataLabels.fontSize,
+                      fontWeight: dataLabels.fontWeight,
+                      fill: dataLabels.color
+                    }}
+                  />
+                )}
+              </Component>
+            );
+          })}
+        </ComposedChart>
+      );
+    }
+
+    // Area charts
+    if (isAreaChart(type)) {
+      const layout = isHorizontalChart(type) ? 'vertical' : 'horizontal';
+      const stackId = isStackedChart(type) ? 'stack' : undefined;
+      return (
+        <AreaChart data={previewData} layout={layout}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          {layout === 'horizontal' ? (
+            <>
+              <XAxis
+                dataKey="name"
+                angle={xAxis.slant || 0}
+                textAnchor={xAxis.slant ? 'end' : 'middle'}
+                height={xAxis.slant === 90 ? 100 : xAxis.slant === 45 ? 80 : 60}
+                tick={{ fontSize: xAxis.fontSize, fill: xAxis.fontColor }}
+              />
+              <YAxis
+                tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }}
+                domain={[
+                  leftYAxis.min === 'auto' ? 'auto' : leftYAxis.min,
+                  leftYAxis.max === 'auto' ? 'auto' : leftYAxis.max
+                ]}
+              />
+            </>
+          ) : (
+            <>
+              <XAxis type="number" tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }} />
+              <YAxis type="category" dataKey="name" tick={{ fontSize: xAxis.fontSize, fill: xAxis.fontColor }} />
+            </>
+          )}
+          <Tooltip />
+          {legend.enabled && <RechartsLegend />}
+          {previewStackKeys.length === 0 ? (
+            <Area
+              type={curveType}
+              dataKey="value"
+              stroke={COLORS[0]}
+              fill={COLORS[0]}
+              fillOpacity={0.3}
+              strokeWidth={strokeWidth}
+            >
+              {dataLabels.enabled && (
+                <LabelList
+                  dataKey="value"
+                  position={dataLabels.position as any}
+                  style={{
+                    fontSize: dataLabels.fontSize,
+                    fontWeight: dataLabels.fontWeight,
+                    fill: dataLabels.color
+                  }}
+                />
+              )}
+            </Area>
+          ) : (
+            previewStackKeys.map((key, idx) => (
+              <Area
+                key={key}
+                type={curveType}
+                dataKey={key}
+                stackId={stackId}
+                stroke={categoryConfig[key]?.color || COLORS[idx % COLORS.length]}
+                fill={categoryConfig[key]?.color || COLORS[idx % COLORS.length]}
+                fillOpacity={0.35}
+                strokeWidth={strokeWidth}
+              >
+                {dataLabels.enabled && (
+                  <LabelList
+                    dataKey={key}
+                    position={dataLabels.position as any}
+                    style={{
+                      fontSize: dataLabels.fontSize,
+                      fontWeight: dataLabels.fontWeight,
+                      fill: dataLabels.color
+                    }}
+                  />
+                )}
+              </Area>
+            ))
+          )}
+        </AreaChart>
+      );
+    }
+
+    // Line charts
+    if (isLineChart(type)) {
+      const lineType = type === 'smooth-line' ? 'monotone' : curveType;
+      return (
+        <LineChart data={previewData}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          <XAxis
+            dataKey="name"
+            angle={xAxis.slant || 0}
+            textAnchor={xAxis.slant ? 'end' : 'middle'}
+            height={xAxis.slant === 90 ? 100 : xAxis.slant === 45 ? 80 : 60}
+            tick={{ fontSize: xAxis.fontSize, fill: xAxis.fontColor }}
+          />
+          <YAxis
+            tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }}
+            domain={[
+              leftYAxis.min === 'auto' ? 'auto' : leftYAxis.min,
+              leftYAxis.max === 'auto' ? 'auto' : leftYAxis.max
+            ]}
+          />
+          <Tooltip />
+          {legend.enabled && <RechartsLegend />}
+          <Line
+            type={lineType}
+            dataKey="value"
+            stroke={COLORS[0]}
+            strokeWidth={strokeWidth}
+            dot={{ r: 4 }}
+          >
+            {dataLabels.enabled && (
+              <LabelList
+                dataKey="value"
+                position={dataLabels.position as any}
+                style={{
+                  fontSize: dataLabels.fontSize,
+                  fontWeight: dataLabels.fontWeight,
+                  fill: dataLabels.color
+                }}
+              />
+            )}
+          </Line>
+        </LineChart>
+      );
+    }
+
+    // Column / Bar charts
+    const layout = isHorizontalChart(type) ? 'vertical' : 'horizontal';
+    const stackId = isStackedChart(type) ? 'stack' : undefined;
+    const keys = previewStackKeys.length > 0 ? previewStackKeys : ['value'];
+
+    return (
+      <BarChart data={previewData} layout={layout}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+        {layout === 'horizontal' ? (
+          <>
+            <XAxis
+              dataKey="name"
+              angle={xAxis.slant || 0}
+              textAnchor={xAxis.slant ? 'end' : 'middle'}
+              height={xAxis.slant === 90 ? 100 : xAxis.slant === 45 ? 80 : 60}
+              tick={{ fontSize: xAxis.fontSize, fill: xAxis.fontColor }}
+            />
+            <YAxis
+              tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }}
+              domain={[
+                leftYAxis.min === 'auto' ? 'auto' : leftYAxis.min,
+                leftYAxis.max === 'auto' ? 'auto' : leftYAxis.max
+              ]}
+            />
+          </>
+        ) : (
+          <>
+            <XAxis type="number" tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }} />
+            <YAxis type="category" dataKey="name" tick={{ fontSize: xAxis.fontSize, fill: xAxis.fontColor }} />
+          </>
+        )}
+        <Tooltip />
+        {legend.enabled && <RechartsLegend />}
+        {keys.map((key, idx) => (
+          <Bar
+            key={key}
+            dataKey={key}
+            stackId={stackId}
+            onDoubleClick={(d: any) => handleBarDoubleClick(d.name)}
+            style={{ cursor: 'pointer', outline: 'none' }}
+            fill={categoryConfig[key]?.color || COLORS[idx % COLORS.length]}
+          >
+            {dataLabels.enabled && (
+              <LabelList
+                dataKey={key}
+                position={dataLabels.position as any}
+                style={{
+                  fontSize: dataLabels.fontSize,
+                  fontWeight: dataLabels.fontWeight,
+                  fill: dataLabels.color
+                }}
+              />
+            )}
+          </Bar>
+        ))}
+      </BarChart>
+    );
+  };
 
   const toggleSection = (section: string) => {
     const newSections = new Set(openSections);
@@ -744,232 +1206,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                   )}
 
                   <ResponsiveContainer width="100%" height={400}>
-                    {type === 'pie' ? (
-                      <PieChart>
-                        <Pie
-                          data={previewData}
-                          dataKey="value"
-                          nameKey="name"
-                          cx="50%"
-                          cy="50%"
-                          label={dataLabels.enabled}
-                          onDoubleClick={(data: any) => handleBarDoubleClick(data.name)}
-                          style={{ cursor: 'pointer', outline: 'none' }}
-                        >
-                          {previewData.map((entry: any, index) => (
-                            <Cell
-                              key={`cell-${index}`}
-                              fill={categoryConfig[entry.name]?.color || COLORS[index % COLORS.length]}
-                            />
-                          ))}
-                        </Pie>
-                        {legend.enabled && <RechartsLegend />}
-                        <Tooltip />
-                      </PieChart>
-                    ) : isMultiSeriesChart && series.length > 0 ? (
-                      <ComposedChart data={previewData} layout={barOrientation === 'horizontal' ? 'vertical' : 'horizontal'}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        {barOrientation === 'vertical' ? (
-                          <>
-                            <XAxis
-                              dataKey="name"
-                              angle={xAxis.slant || 0}
-                              textAnchor={xAxis.slant ? 'end' : 'middle'}
-                              height={xAxis.slant === 90 ? 100 : xAxis.slant === 45 ? 80 : 60}
-                              tick={{ fontSize: xAxis.fontSize, fill: xAxis.fontColor }}
-                              style={{ outline: 'none' }}
-                            />
-                            <YAxis
-                              yAxisId="left"
-                              tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }}
-                              domain={[
-                                leftYAxis.min === 'auto' ? 'auto' : leftYAxis.min,
-                                leftYAxis.max === 'auto' ? 'auto' : leftYAxis.max
-                              ]}
-                              style={{ outline: 'none' }}
-                            />
-                            {series.some(s => s.yAxis === 'right') && (
-                              <YAxis
-                                yAxisId="right"
-                                orientation="right"
-                                tick={{ fontSize: rightYAxis.fontSize, fill: rightYAxis.fontColor }}
-                                domain={[
-                                  rightYAxis.min === 'auto' ? 'auto' : rightYAxis.min,
-                                  rightYAxis.max === 'auto' ? 'auto' : rightYAxis.max
-                                ]}
-                                style={{ outline: 'none' }}
-                              />
-                            )}
-                          </>
-                        ) : (
-                          <>
-                            <XAxis
-                              type="number"
-                              tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }}
-                              style={{ outline: 'none' }}
-                            />
-                            <YAxis
-                              type="category"
-                              dataKey="name"
-                              tick={{ fontSize: xAxis.fontSize, fill: xAxis.fontColor }}
-                              style={{ outline: 'none' }}
-                            />
-                          </>
-                        )}
-                        <Tooltip />
-                        {legend.enabled && <RechartsLegend />}
-
-                        {series.map((s) => {
-                          if (s.type === 'bar') {
-                            return (
-                              <Bar
-                                key={s.id}
-                                dataKey={s.id}
-                                name={s.label}
-                                fill={s.color}
-                                yAxisId={barOrientation === 'vertical' ? s.yAxis : undefined}
-                                stackId={type === 'stacked-bar' ? 'stack' : undefined}
-                                style={{ outline: 'none' }}
-                              />
-                            );
-                          } else if (s.type === 'line') {
-                            return (
-                              <Line
-                                key={s.id}
-                                dataKey={s.id}
-                                name={s.label}
-                                stroke={s.color}
-                                strokeWidth={2}
-                                yAxisId={barOrientation === 'vertical' ? s.yAxis : undefined}
-                                dot={{ r: 4 }}
-                                style={{ outline: 'none' }}
-                              />
-                            );
-                          } else if (s.type === 'area') {
-                            return (
-                              <Area
-                                key={s.id}
-                                dataKey={s.id}
-                                name={s.label}
-                                fill={s.color}
-                                stroke={s.color}
-                                yAxisId={barOrientation === 'vertical' ? s.yAxis : undefined}
-                                style={{ outline: 'none' }}
-                              />
-                            );
-                          }
-                          return null;
-                        })}
-                      </ComposedChart>
-                    ) : type === 'line' ? (
-                      <ComposedChart data={previewData}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis
-                          dataKey="name"
-                          angle={xAxis.slant || 0}
-                          textAnchor={xAxis.slant ? 'end' : 'middle'}
-                          height={xAxis.slant === 90 ? 100 : xAxis.slant === 45 ? 80 : 60}
-                          tick={{ fontSize: xAxis.fontSize, fill: xAxis.fontColor }}
-                          style={{ outline: 'none' }}
-                        />
-                        <YAxis
-                          tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }}
-                          domain={[
-                            leftYAxis.min === 'auto' ? 'auto' : leftYAxis.min,
-                            leftYAxis.max === 'auto' ? 'auto' : leftYAxis.max
-                          ]}
-                          style={{ outline: 'none' }}
-                        />
-                        <Tooltip />
-                        {legend.enabled && <RechartsLegend />}
-                        <Line
-                          type="monotone"
-                          dataKey="value"
-                          stroke={COLORS[0]}
-                          strokeWidth={2}
-                          dot={{ r: 4 }}
-                          style={{ outline: 'none' }}
-                        >
-                          {dataLabels.enabled && (
-                            <LabelList
-                              dataKey="value"
-                              position={dataLabels.position as any}
-                              style={{
-                                fontSize: dataLabels.fontSize,
-                                fontWeight: dataLabels.fontWeight,
-                                fill: dataLabels.color
-                              }}
-                            />
-                          )}
-                        </Line>
-                      </ComposedChart>
-                    ) : (
-                      <BarChart
-                        data={previewData}
-                        layout={barOrientation === 'horizontal' ? 'vertical' : 'horizontal'}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        {barOrientation === 'vertical' ? (
-                          <>
-                            <XAxis
-                              dataKey="name"
-                              angle={xAxis.slant || 0}
-                              textAnchor={xAxis.slant ? 'end' : 'middle'}
-                              height={xAxis.slant === 90 ? 100 : xAxis.slant === 45 ? 80 : 60}
-                              tick={{ fontSize: xAxis.fontSize, fill: xAxis.fontColor }}
-                              style={{ outline: 'none' }}
-                            />
-                            <YAxis
-                              tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }}
-                              domain={[
-                                leftYAxis.min === 'auto' ? 'auto' : leftYAxis.min,
-                                leftYAxis.max === 'auto' ? 'auto' : leftYAxis.max
-                              ]}
-                              style={{ outline: 'none' }}
-                            />
-                          </>
-                        ) : (
-                          <>
-                            <XAxis
-                              type="number"
-                              tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }}
-                              style={{ outline: 'none' }}
-                            />
-                            <YAxis
-                              type="category"
-                              dataKey="name"
-                              tick={{ fontSize: xAxis.fontSize, fill: xAxis.fontColor }}
-                              style={{ outline: 'none' }}
-                            />
-                          </>
-                        )}
-                        <Tooltip />
-                        {legend.enabled && <RechartsLegend />}
-                        <Bar
-                          dataKey="value"
-                          onDoubleClick={(data: any) => handleBarDoubleClick(data.name)}
-                          style={{ cursor: 'pointer', outline: 'none' }}
-                        >
-                          {previewData.map((entry: any, idx) => (
-                            <Cell
-                              key={`cell-${idx}`}
-                              fill={categoryConfig[entry.name]?.color || COLORS[idx % COLORS.length]}
-                            />
-                          ))}
-                          {dataLabels.enabled && (
-                            <LabelList
-                              dataKey="value"
-                              position={dataLabels.position as any}
-                              style={{
-                                fontSize: dataLabels.fontSize,
-                                fontWeight: dataLabels.fontWeight,
-                                fill: dataLabels.color
-                              }}
-                            />
-                          )}
-                        </Bar>
-                      </BarChart>
-                    )}
+                    {renderPreviewChart()}
                   </ResponsiveContainer>
                 </div>
               ) : (
