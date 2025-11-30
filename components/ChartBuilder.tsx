@@ -10,7 +10,7 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, Save, ChevronDown, ChevronUp, Palette, Type as TypeIcon, Sliders as SlidersIcon, Sparkles, Copy, Wand2, Layers } from 'lucide-react';
+import { X, Save, ChevronDown, ChevronUp, Palette, Type as TypeIcon, Sliders as SlidersIcon, Sparkles, Copy, Wand2, Layers, MousePointer2, Settings2 } from 'lucide-react';
 import {
   ChartType,
   DashboardWidget,
@@ -31,6 +31,8 @@ import {
   Bar,
   Line,
   Area,
+  Scatter,
+  ScatterChart,
   CartesianGrid,
   XAxis,
   YAxis,
@@ -102,6 +104,27 @@ const chartTemplates = [
       legend: { enabled: true, position: 'bottom', fontSize: 11, fontColor: '#111827', alignment: 'center' } as LegendConfig,
       style: { lineWidth: 2, markerSize: 5, barRadius: 6 },
       interaction: { enableBrush: true, quickRanges: [10, 20] } as InteractionConfig,
+    }
+  },
+  {
+    id: 'stacked-share',
+    label: 'Stacked Bar',
+    type: 'stacked' as ChartType,
+    description: 'Layer categories to compare shares',
+    config: {
+      barMode: 'stacked' as const,
+      legend: { enabled: true, position: 'top', fontSize: 11, fontColor: '#1f2937', alignment: 'center' } as LegendConfig,
+      style: { barRadius: 8, palette: ['#2563EB', '#10B981', '#F59E0B', '#EF4444'] },
+    }
+  },
+  {
+    id: 'scatter-correlation',
+    label: 'Scatter Plot',
+    type: 'scatter' as ChartType,
+    description: 'Plot correlations with crisp markers',
+    config: {
+      legend: { enabled: true, position: 'bottom', fontSize: 11, fontColor: '#111827', alignment: 'center' } as LegendConfig,
+      style: { markerSize: 8, scatterShape: 'diamond' },
     }
   }
 ];
@@ -230,14 +253,14 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   const [categoryConfig, setCategoryConfig] = useState<Record<string, CategoryConfig>>({});
   const [templateId, setTemplateId] = useState<string>('');
   const [interaction, setInteraction] = useState<InteractionConfig>({ enableBrush: true, enableCrosshair: true, quickRanges: [10] });
-  const defaultStyle: StyleConfig = { lineWidth: 2, markerSize: 4, barRadius: 4, palette: COLORS, smoothLines: true, background: '#ffffff', areaOpacity: 0.3, cardRadius: 12, showShadow: false };
+  const defaultStyle: StyleConfig = { lineWidth: 2, markerSize: 4, barRadius: 4, palette: COLORS, smoothLines: true, background: '#ffffff', areaOpacity: 0.3, cardRadius: 12, showShadow: false, scatterShape: 'circle' };
   const [styleConfig, setStyleConfig] = useState<StyleConfig>(defaultStyle);
   const palette = useMemo(() => styleConfig.palette || COLORS, [styleConfig.palette]);
 
   const createSeries = (index: number, base?: Partial<SeriesConfig>): SeriesConfig => ({
     id: base?.id || `series-${Date.now().toString(36)}-${index}`,
     label: base?.label || `Series ${index + 1}`,
-    type: base?.type || (type === 'line' ? 'line' : type === 'area' ? 'area' : 'bar'),
+    type: base?.type || (type === 'line' ? 'line' : type === 'area' ? 'area' : type === 'scatter' ? 'scatter' : 'bar'),
     measure: base?.measure || measure,
     measureCol: base?.measureCol || measureCol || undefined,
     dimension: base?.dimension || dimension || undefined,
@@ -299,6 +322,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   // UI state
   const [openSections, setOpenSections] = useState<Set<string>>(new Set());
   const [categoryModal, setCategoryModal] = useState<{ isOpen: boolean; category: string } | null>(null);
+  const [selectedElement, setSelectedElement] = useState<{ kind: 'category' | 'series' | 'label'; name: string; seriesId?: string } | null>(null);
 
   const handleTypeChange = (nextType: ChartType) => {
     setType(nextType);
@@ -311,7 +335,17 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       return;
     }
 
-    setSeriesList(prev => prev.map(s => ({ ...s, type: nextType === 'line' ? 'line' : nextType === 'area' ? 'area' : 'bar' })));
+    if (nextType === 'stacked') {
+      setSeriesList(prev => (prev.length > 0 ? prev : [createSeries(0)]).map(s => ({ ...s, type: 'bar' })));
+      return;
+    }
+
+    if (nextType === 'scatter') {
+      setSeriesList(prev => (prev.length > 0 ? prev : [createSeries(0)]).map(s => ({ ...s, type: 'scatter', yAxis: 'left' })));
+      return;
+    }
+
+    setSeriesList(prev => prev.map(s => ({ ...s, type: nextType === 'line' ? 'line' : nextType === 'area' ? 'area' : 'bar' }))); 
   };
 
   // Initialize
@@ -382,6 +416,20 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       .filter(Boolean);
 
   const applySorting = (rows: any[], seriesKeys: string[], categoryOrder: string[]) => {
+    if (sortConfig.persistedOrder && sortConfig.persistedOrder.length > 0) {
+      const order = sortConfig.persistedOrder;
+      return [...rows].sort((a, b) => {
+        const aIdx = order.indexOf(a.name);
+        const bIdx = order.indexOf(b.name);
+        if (aIdx === -1 && bIdx === -1) {
+          return categoryOrder.indexOf(a.name) - categoryOrder.indexOf(b.name);
+        }
+        if (aIdx === -1) return 1;
+        if (bIdx === -1) return -1;
+        return aIdx - bIdx;
+      });
+    }
+
     if (!sortConfig || sortConfig.mode === 'none') {
       if (categoryOrder.length === 0) return rows;
       return [...rows].sort((a, b) => categoryOrder.indexOf(a.name) - categoryOrder.indexOf(b.name));
@@ -593,9 +641,11 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       return;
     }
 
+    const previewOrder = previewData.map(item => (item as any).name).filter(Boolean) as string[];
     const preparedSort: SortConfig = {
       ...sortConfig,
       customOrder: sortConfig.mode === 'custom' ? parseCustomOrder(customSortInput) : undefined,
+      persistedOrder: previewOrder,
     };
 
     // Ensure every series carries the resolved dimension so the dashboard renderer has a stable X key
@@ -636,9 +686,48 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
 
   const handleBarDoubleClick = (category: string) => {
     setCategoryModal({ isOpen: true, category });
+    setSelectedElement({ kind: 'category', name: category });
+  };
+
+  const handleElementPick = (kind: 'category' | 'series' | 'label', name: string, seriesId?: string) => {
+    setSelectedElement({ kind, name, seriesId });
+  };
+
+  const updateSelectedColor = (color: string) => {
+    if (!selectedElement) return;
+    if (selectedElement.kind === 'category') {
+      setCategoryConfig(prev => ({
+        ...prev,
+        [selectedElement.name]: { ...(prev[selectedElement.name] || {}), color }
+      }));
+    }
+    if (selectedElement.kind === 'series' && selectedElement.seriesId) {
+      setSeriesList(prev => prev.map(s => s.id === selectedElement.seriesId ? { ...s, color } : s));
+    }
+    if (selectedElement.kind === 'label') {
+      setDataLabels(prev => ({ ...prev, color }));
+    }
+  };
+
+  const updateSelectedLabel = (label: string) => {
+    if (!selectedElement) return;
+    if (selectedElement.kind === 'category') {
+      setCategoryConfig(prev => ({
+        ...prev,
+        [selectedElement.name]: { ...(prev[selectedElement.name] || {}), label }
+      }));
+    }
+    if (selectedElement.kind === 'series' && selectedElement.seriesId) {
+      setSeriesList(prev => prev.map(s => s.id === selectedElement.seriesId ? { ...s, label } : s));
+    }
+    if (selectedElement.kind === 'label') {
+      setDataLabels(prev => ({ ...prev, enabled: true }));
+    }
   };
 
   const showAxes = type !== 'pie' && type !== 'kpi' && type !== 'wordcloud' && type !== 'table';
+  const isScatter = type === 'scatter';
+  const isStacked = type === 'stacked';
 
   if (!isOpen) return null;
 
@@ -737,6 +826,33 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                         {legend.enabled && <RechartsLegend />}
                         <Tooltip />
                       </PieChart>
+                    ) : isScatter ? (
+                      <ScatterChart data={previewData.map((item, idx) => ({ ...item, __xIndex: idx }))} margin={{ top: 10, left: 10, right: 10 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis
+                          dataKey="__xIndex"
+                          type="number"
+                          tickFormatter={(val) => previewData[val]?.name || val}
+                          tick={{ fontSize: xAxis.fontSize, fill: xAxis.fontColor }}
+                        />
+                        <YAxis
+                          tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }}
+                          label={leftYAxis.title ? { value: leftYAxis.title, angle: -90, position: 'insideLeft' } : undefined}
+                        />
+                        <Tooltip />
+                        {legend.enabled && <RechartsLegend />}
+                        {(seriesList.length > 0 ? seriesList : [{ id: 'value', label: 'Series 1', type: 'scatter' as const, color: palette[0], yAxis: 'left' as const }]).map((series, idx) => (
+                          <Scatter
+                            key={series.id}
+                            dataKey={series.id}
+                            name={series.label || `Series ${idx + 1}`}
+                            fill={series.color || palette[idx % palette.length]}
+                            shape={styleConfig.scatterShape || 'circle'}
+                            size={styleConfig.markerSize || 6}
+                            onClick={(data: any) => handleElementPick('series', series.label || series.id, series.id)}
+                          />
+                        ))}
+                      </ScatterChart>
                     ) : (
                       <ComposedChart data={previewData}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -775,9 +891,9 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                         {legend.enabled && <RechartsLegend />}
                         {(seriesList.length > 0
                           ? seriesList
-                          : [{ id: 'value', label: 'Values', type: type === 'line' ? 'line' : type === 'area' ? 'area' : 'bar', color: palette[0], yAxis: 'left' as const }]
+                          : [{ id: 'value', label: 'Values', type: type === 'line' ? 'line' : type === 'area' ? 'area' : type === 'scatter' ? 'scatter' : 'bar', color: palette[0], yAxis: 'left' as const }]
                         ).map((series, idx) => {
-                          const Component = series.type === 'line' ? Line : series.type === 'area' ? Area : Bar;
+                          const Component = series.type === 'line' ? Line : series.type === 'area' ? Area : series.type === 'scatter' ? Scatter : Bar;
                           return (
                             <Component
                               key={series.id}
@@ -790,17 +906,29 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                               fillOpacity={series.type === 'area' ? styleConfig.areaOpacity ?? 0.3 : 1}
                               strokeWidth={series.type === 'line' ? (styleConfig.lineWidth || 2) : 0}
                               radius={series.type === 'bar' && styleConfig.barRadius ? [styleConfig.barRadius, styleConfig.barRadius, 0, 0] : undefined}
+                              stackId={isStacked && series.type === 'bar' ? 'stack' : undefined}
                               onDoubleClick={(data: any) => handleBarDoubleClick(data.name)}
+                              onClick={(data: any) => handleElementPick(series.type === 'bar' ? 'category' : 'series', data?.name || series.label, series.id)}
                             >
                               {dataLabels.enabled && (
                                 <LabelList
                                   dataKey={series.id}
                                   position={dataLabels.position as any}
-                                  style={{
-                                    fontSize: dataLabels.fontSize,
-                                    fontWeight: dataLabels.fontWeight,
-                                    fill: dataLabels.color
-                                  }}
+                                  content={(labelProps: any) => (
+                                    <text
+                                      x={labelProps.x}
+                                      y={labelProps.y}
+                                      dy={-4}
+                                      textAnchor="middle"
+                                      fill={dataLabels.color}
+                                      fontSize={dataLabels.fontSize}
+                                      fontWeight={dataLabels.fontWeight}
+                                      style={{ cursor: 'pointer' }}
+                                      onClick={() => handleElementPick('label', String(labelProps.value ?? ''), series.id)}
+                                    >
+                                      {labelProps.value}
+                                    </text>
+                                  )}
                                 />
                               )}
                             </Component>
@@ -859,6 +987,8 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                       style={{ outline: 'none' }}
                     >
                       <option value="bar">Bar</option>
+                      <option value="stacked">Stacked</option>
+                      <option value="scatter">Scatter</option>
                       <option value="line">Line</option>
                       <option value="area">Area</option>
                       <option value="combo">Combo (Bar + Line)</option>
@@ -931,6 +1061,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                                     <option value="bar">Bar</option>
                                     <option value="line">Line</option>
                                     <option value="area">Area</option>
+                                    <option value="scatter">Scatter</option>
                                   </select>
                                 </div>
                               </div>
@@ -1079,7 +1210,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                     <div className="grid grid-cols-3 gap-3">
                       <select
                         value={sortConfig.mode}
-                        onChange={(e) => setSortConfig({ ...sortConfig, mode: e.target.value as SortConfig['mode'] })}
+                        onChange={(e) => setSortConfig({ ...sortConfig, mode: e.target.value as SortConfig['mode'], persistedOrder: undefined })}
                         className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
                       >
                         <option value="none">Keep data order</option>
@@ -1215,6 +1346,78 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                     </div>
                   </div>
                   <Section
+                    title="Inspector"
+                    icon={<MousePointer2 className="w-4 h-4 text-blue-600" />}
+                    isOpen={openSections.has('inspector') || !selectedElement}
+                    onToggle={() => toggleSection('inspector')}
+                  >
+                    <div className="space-y-2">
+                      {selectedElement ? (
+                        <>
+                          <div className="text-sm font-semibold text-gray-800">
+                            Selected {selectedElement.kind === 'category' ? 'Category' : selectedElement.kind === 'series' ? 'Series' : 'Label'}: {selectedElement.name}
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-xs font-medium text-gray-700 mb-1">Color</label>
+                              <input
+                                type="color"
+                                value={selectedElement.kind === 'series'
+                                  ? seriesList.find(s => s.id === selectedElement.seriesId)?.color || palette[0]
+                                  : selectedElement.kind === 'category'
+                                    ? categoryConfig[selectedElement.name]?.color || palette[0]
+                                    : dataLabels.color}
+                                onChange={(e) => updateSelectedColor(e.target.value)}
+                                className="w-16 h-10 border border-gray-300 rounded"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-gray-700 mb-1">Label</label>
+                              <input
+                                type="text"
+                                value={selectedElement.kind === 'category'
+                                  ? categoryConfig[selectedElement.name]?.label || selectedElement.name
+                                  : selectedElement.kind === 'series'
+                                    ? seriesList.find(s => s.id === selectedElement.seriesId)?.label || selectedElement.name
+                                    : selectedElement.name}
+                                onChange={(e) => updateSelectedLabel(e.target.value)}
+                                className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                              />
+                            </div>
+                          </div>
+                          {selectedElement.kind === 'label' && (
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="block text-xs font-medium text-gray-700 mb-1">Font size</label>
+                                <input
+                                  type="range"
+                                  min={8}
+                                  max={24}
+                                  value={dataLabels.fontSize}
+                                  onChange={(e) => setDataLabels({ ...dataLabels, fontSize: parseInt(e.target.value) })}
+                                  className="w-full"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-gray-700 mb-1">Weight</label>
+                                <select
+                                  value={dataLabels.fontWeight}
+                                  onChange={(e) => setDataLabels({ ...dataLabels, fontWeight: e.target.value as any })}
+                                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                                >
+                                  <option value="normal">Normal</option>
+                                  <option value="bold">Bold</option>
+                                </select>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <p className="text-sm text-gray-600">Click bars, lines, or labels in the preview to fine-tune style.</p>
+                      )}
+                    </div>
+                  </Section>
+                  <Section
                     title="Styling"
                     icon={<Palette className="w-4 h-4 text-blue-600" />}
                     isOpen={openSections.has('styling')}
@@ -1233,18 +1436,20 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                           style={{ outline: 'none' }}
                         />
                       </div>
-                      <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">Marker Size: {styleConfig.markerSize}px</label>
-                        <input
-                          type="range"
-                          min={2}
-                          max={10}
-                          value={styleConfig.markerSize}
-                          onChange={(e) => setStyleConfig({ ...styleConfig, markerSize: parseInt(e.target.value) })}
-                          className="w-full"
-                          style={{ outline: 'none' }}
-                        />
-                      </div>
+                      {(type === 'line' || type === 'area' || type === 'combo' || isScatter) && (
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Marker Size: {styleConfig.markerSize}px</label>
+                          <input
+                            type="range"
+                            min={2}
+                            max={14}
+                            value={styleConfig.markerSize}
+                            onChange={(e) => setStyleConfig({ ...styleConfig, markerSize: parseInt(e.target.value) })}
+                            className="w-full"
+                            style={{ outline: 'none' }}
+                          />
+                        </div>
+                      )}
                       <div>
                         <label className="block text-xs font-medium text-gray-700 mb-1">Bar Corner Radius: {styleConfig.barRadius}px</label>
                         <input
@@ -1257,6 +1462,20 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                           style={{ outline: 'none' }}
                         />
                       </div>
+                      {isScatter && (
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Point shape</label>
+                          <select
+                            value={styleConfig.scatterShape || 'circle'}
+                            onChange={(e) => setStyleConfig({ ...styleConfig, scatterShape: e.target.value as any })}
+                            className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                          >
+                            <option value="circle">Circle</option>
+                            <option value="square">Square</option>
+                            <option value="diamond">Diamond</option>
+                          </select>
+                        </div>
+                      )}
                       <div>
                         <label className="block text-xs font-medium text-gray-700 mb-1">Custom Palette (comma-separated)</label>
                         <input

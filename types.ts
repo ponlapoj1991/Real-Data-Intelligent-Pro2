@@ -82,7 +82,7 @@ export interface TransformationRule {
 
 // --- Dashboard & Widget Types (Phase 2 & 3 & 4) ---
 
-export type ChartType = 'bar' | 'line' | 'pie' | 'area' | 'kpi' | 'wordcloud' | 'table' | 'combo';
+export type ChartType = 'bar' | 'line' | 'pie' | 'area' | 'kpi' | 'wordcloud' | 'table' | 'combo' | 'stacked' | 'scatter';
 export type AggregateMethod = 'count' | 'sum' | 'avg';
 
 export interface DashboardFilter {
@@ -104,7 +104,7 @@ export interface DataLabelConfig {
 export interface SeriesConfig {
   id: string;
   label: string;
-  type: 'bar' | 'line' | 'area';
+  type: 'bar' | 'line' | 'area' | 'scatter';
   measure: AggregateMethod;
   measureCol?: string;
   dimension?: string;
@@ -166,6 +166,7 @@ export interface StyleConfig {
   areaOpacity?: number;
   cardRadius?: number;
   showShadow?: boolean;
+  scatterShape?: 'circle' | 'square' | 'diamond';
 }
 
 export type SortMode = 'none' | 'asc' | 'desc' | 'custom';
@@ -173,6 +174,7 @@ export interface SortConfig {
   mode: SortMode;
   key?: 'total' | 'dimension';
   customOrder?: string[];
+  persistedOrder?: string[];
 }
 
 export interface DashboardWidget {

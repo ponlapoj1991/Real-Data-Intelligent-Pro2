@@ -148,6 +148,20 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
   const applySorting = (rows: any[], widget: DashboardWidget, valueKeys: string[], categoryOrder: string[] = []) => {
     const sort = widget.sort;
+    if (sort?.persistedOrder && sort.persistedOrder.length > 0) {
+      const order = sort.persistedOrder;
+      return [...rows].sort((a, b) => {
+        const aIdx = order.indexOf(a.name);
+        const bIdx = order.indexOf(b.name);
+        if (aIdx === -1 && bIdx === -1) {
+          return categoryOrder.indexOf(a.name) - categoryOrder.indexOf(b.name);
+        }
+        if (aIdx === -1) return 1;
+        if (bIdx === -1) return -1;
+        return aIdx - bIdx;
+      });
+    }
+
     if (!sort || sort.mode === 'none') {
       if (categoryOrder.length === 0) return rows;
       return [...rows].sort((a, b) => categoryOrder.indexOf(a.name) - categoryOrder.indexOf(b.name));
@@ -620,6 +634,8 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
         const data = applyRangeToData(widget.id, rawData);
         if (!data || data.length === 0) return <div className="flex items-center justify-center h-full text-gray-400 text-sm">No Data</div>;
 
+        const isStacked = widget.type === 'stacked';
+        const isScatter = widget.type === 'scatter';
         const hasRightAxis = widget.series.some(s => s.yAxis === 'right');
         const axisKey = resolvedDimension || widget.dimension || widget.series[0]?.dimension || 'category';
         const legendConfig = widget.legend || { enabled: true, position: 'bottom', fontSize: 11, fontColor: '#666666', alignment: 'center' };
@@ -628,6 +644,61 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
         const rightYAxisConfig = widget.rightYAxis || { fontSize: 11, fontColor: '#666666', min: 'auto', max: 'auto', format: '#,##0', showGridlines: false };
         const dataLabelsConfig = widget.dataLabels || { enabled: false, position: 'top', fontSize: 11, fontWeight: 'normal', color: '#000000' };
         const quickRanges = widget.interaction?.quickRanges || [];
+
+        if (isScatter) {
+          const scatterData = data.map((row, idx) => ({ ...row, __xIndex: idx }));
+          return (
+            <div className="h-full flex flex-col">
+              {widget.chartTitle && (
+                <div className="px-4 pt-2 pb-1">
+                  <h4 className="text-sm font-semibold text-gray-900">{widget.chartTitle}</h4>
+                  {widget.subtitle && <p className="text-xs text-gray-500">{widget.subtitle}</p>}
+                </div>
+              )}
+              <div className="px-4 flex gap-2 items-center text-[11px] text-gray-500">
+                {legendConfig.enabled && <span>Click points to inspect</span>}
+              </div>
+              <ResponsiveContainer width="100%" height={320}>
+                <ScatterChart margin={{ left: 20, right: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis
+                    dataKey="__xIndex"
+                    type="number"
+                    tickFormatter={(val) => scatterData[val]?.name || val}
+                    tick={{ fontSize: xAxisConfig.fontSize, fill: xAxisConfig.fontColor }}
+                  />
+                  <YAxis
+                    tick={{ fontSize: leftYAxisConfig.fontSize, fill: leftYAxisConfig.fontColor }}
+                    domain={[
+                      leftYAxisConfig.min === 'auto' ? 'auto' : leftYAxisConfig.min,
+                      leftYAxisConfig.max === 'auto' ? 'auto' : leftYAxisConfig.max,
+                    ]}
+                    label={leftYAxisConfig.title ? { value: leftYAxisConfig.title, angle: -90, position: 'insideLeft' } : undefined}
+                  />
+                  <Tooltip cursor={{ stroke: '#e2e8f0' }} />
+                  {legendConfig.enabled && (
+                    <Legend
+                      verticalAlign={legendConfig.position === 'bottom' ? 'bottom' : legendConfig.position === 'top' ? 'top' : 'middle'}
+                      align={legendConfig.alignment === 'right' ? 'right' : legendConfig.alignment === 'left' ? 'left' : 'center'}
+                      wrapperStyle={{ fontSize: `${legendConfig.fontSize}px`, color: legendConfig.fontColor || '#666666' }}
+                    />
+                  )}
+                  {widget.series.map((series, idx) => (
+                    <Scatter
+                      key={series.id}
+                      name={series.label || `Series ${idx + 1}`}
+                      data={scatterData}
+                      dataKey={series.id}
+                      fill={series.color || getWidgetColor(widget, series.id, idx)}
+                      shape={widget.style?.scatterShape || 'circle'}
+                      size={widget.style?.markerSize || 6}
+                    />
+                  ))}
+                </ScatterChart>
+              </ResponsiveContainer>
+            </div>
+          );
+        }
 
         return (
           <div className="h-full flex flex-col">
@@ -705,7 +776,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                 )}
 
                 {widget.series.map((s, idx) => {
-                  const Component = s.type === 'line' ? Line : s.type === 'area' ? Area : Bar;
+                  const Component = s.type === 'line' ? Line : s.type === 'area' ? Area : s.type === 'scatter' ? Scatter : Bar;
                   return (
                     <Component
                       key={s.id}
@@ -713,15 +784,16 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                       type={widget.style?.smoothLines ? 'monotone' : 'linear'}
                       dataKey={s.id}
                       name={s.label}
-                      fill={s.color}
-                      stroke={s.color}
+                      fill={s.color || getWidgetColor(widget, s.id, idx)}
+                      stroke={s.color || getWidgetColor(widget, s.id, idx)}
                       fillOpacity={s.type === 'area' ? widget.style?.areaOpacity ?? 0.3 : 1}
-                        strokeWidth={s.type === 'line' ? (widget.style?.lineWidth || 2) : 0}
-                        radius={widget.style?.barRadius ? [widget.style.barRadius, widget.style.barRadius, 0, 0] : undefined}
+                      strokeWidth={s.type === 'line' ? (widget.style?.lineWidth || 2) : 0}
+                      radius={widget.style?.barRadius ? [widget.style.barRadius, widget.style.barRadius, 0, 0] : undefined}
+                      stackId={isStacked && s.type === 'bar' ? 'stack' : undefined}
                       onClick={(barData: any) => handleChartClick(null, widget, barData[axisKey])}
                       className="cursor-pointer"
                     >
-                      {dataLabelsConfig.enabled && (
+                      {dataLabelsConfig.enabled && s.type !== 'scatter' && (
                         <LabelList
                           dataKey={s.id}
                           position={dataLabelsConfig.position as any}
