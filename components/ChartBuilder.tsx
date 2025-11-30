@@ -650,6 +650,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
 
   const showAxes = type !== 'pie' && type !== 'kpi' && type !== 'wordcloud' && type !== 'table';
   const isComboChart = type === 'combo';
+  const isMultiSeriesChart = type === 'combo' || type === 'stacked-bar';
 
   const filteredCategories = allCategories.filter(cat =>
     cat.toLowerCase().includes(categorySearch.toLowerCase())
@@ -680,7 +681,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
             <div className="px-4 py-3 bg-white border-b border-gray-200">
               <h3 className="font-semibold text-gray-900">Live Preview</h3>
               <p className="text-xs text-gray-500 mt-1">
-                {isComboChart ? 'Multi-series combo chart' : 'Single series chart'}
+                {isMultiSeriesChart ? (type === 'stacked-bar' ? 'Stacked bar chart (100%)' : 'Multi-series combo chart') : 'Single series chart'}
                 {' • '}
                 {categoryFilter.length > 0 ? `${categoryFilter.length} categories` : 'All categories'}
               </p>
@@ -976,6 +977,8 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                       <option value="line">Line</option>
                       <option value="area">Area</option>
                       <option value="combo">Combo (Bar + Line)</option>
+                      <option value="stacked-bar">Stacked Bar (100%)</option>
+                      <option value="bubble">Bubble Chart</option>
                       <option value="pie">Pie</option>
                       <option value="kpi">KPI</option>
                       <option value="wordcloud">Word Cloud</option>

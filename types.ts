@@ -82,7 +82,7 @@ export interface TransformationRule {
 
 // --- Dashboard & Widget Types (Phase 2 & 3 & 4) ---
 
-export type ChartType = 'bar' | 'line' | 'pie' | 'area' | 'kpi' | 'wordcloud' | 'table' | 'combo';
+export type ChartType = 'bar' | 'line' | 'pie' | 'area' | 'kpi' | 'wordcloud' | 'table' | 'combo' | 'stacked-bar' | 'bubble';
 export type AggregateMethod = 'count' | 'sum' | 'avg';
 export type SortOrder = 'value-desc' | 'value-asc' | 'name-asc' | 'name-desc' | 'original';
 
