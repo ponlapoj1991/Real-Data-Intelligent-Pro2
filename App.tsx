@@ -5,7 +5,7 @@ import Sidebar from './components/Sidebar';
 import DataIngest from './views/DataIngest';
 import DataPrep from './views/DataPrep';
 import Analytics from './views/Analytics';
-import ReportBuilder from './views/ReportBuilder';
+import { ReportBuilder } from './src/reportBuilder'; // New Report Builder v2 (PPTist clone)
 import AiAgent from './views/AiAgent';
 import Settings from './views/Settings';
 import { Project, AppView, ProjectTab } from './types';
@@ -102,7 +102,9 @@ const App: React.FC = () => {
                       <AiAgent project={currentProject} onUpdateProject={updateProject} />
                   )}
                   {activeTab === ProjectTab.REPORT && (
-                      <ReportBuilder project={currentProject} onUpdateProject={updateProject} />
+                      <div className="absolute inset-0">
+                        <ReportBuilder project={currentProject} onUpdateProject={updateProject} />
+                      </div>
                   )}
                   {activeTab === ProjectTab.SETTINGS && (
                       <Settings project={currentProject} onUpdateProject={updateProject} />

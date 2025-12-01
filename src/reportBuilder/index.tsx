@@ -3,6 +3,14 @@
  * PPTist-inspired presentation builder in React
  */
 
-export { Editor as ReportBuilder } from './components/Editor';
+import React from 'react';
+import { Editor } from './components/Editor';
+
+// Wrapper component for compatibility with old Project interface
+// New Report Builder v2 manages its own state via Zustand
+export const ReportBuilder: React.FC<any> = () => {
+  return <Editor />;
+};
+
 export { useSlideStore } from './store/useSlideStore';
 export * from './types/slides';
