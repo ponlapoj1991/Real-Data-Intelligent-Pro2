@@ -5,10 +5,10 @@ import {
     Plus, Trash2, Save, Download, Layers,
     Maximize, Monitor, Grid3X3, Type, FileUp, Loader2, MousePointer2,
     Bold, Italic, AlignLeft, AlignCenter, AlignRight, ZoomIn, ZoomOut,
-    BringToFront, SendToBack, PaintBucket,
+    BringToFront, SendToBack, PaintBucket, Palette,
     ChevronLeft, ChevronRight, BarChart3, PieChart, LineChart, Activity, Hash, Cloud, Table,
     Undo2, Redo2, Square, Circle, Triangle, ArrowRight, Minus, Star, Highlighter, Copy, Move, RotateCw, Image as ImageIcon,
-    FileText, Settings, Presentation, PanelRightClose, PanelRightOpen, FileInput
+    FileText, Settings, Presentation, PanelRightClose, PanelRightOpen, FileInput, SlidersHorizontal, Droplets, SunMedium
 } from 'lucide-react';
 import { saveProject } from '../utils/storage-compat';
 import { generateCustomReport } from '../utils/report';
@@ -30,6 +30,13 @@ const DRAG_ACTIVATION_DISTANCE = 2; // Require slight movement to start drag
 const GUIDE_SNAP_THRESHOLD = 4;
 
 const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#6366F1', '#84cc16', '#14b8a6'];
+const PPTIST_THEME_COLORS = ['#2F88FF', '#59A9FF', '#A5D3FF', '#52C41A', '#A0D911', '#13C2C2', '#722ED1', '#EB2F96', '#FA8C16', '#F5222D', '#595959', '#8C8C8C', '#BFBFBF', '#D9D9D9', '#F0F0F0'];
+const PPTIST_GRADIENTS = [
+    'linear-gradient(135deg, #2F88FF 0%, #59A9FF 100%)',
+    'linear-gradient(135deg, #13C2C2 0%, #52C41A 100%)',
+    'linear-gradient(135deg, #F5222D 0%, #FA8C16 100%)',
+    'linear-gradient(135deg, #722ED1 0%, #EB2F96 100%)'
+];
 
 // --- Helper Functions ---
 
@@ -462,6 +469,7 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
   // Sidebar States
   const [isLeftSidebarOpen, setLeftSidebarOpen] = useState(true);
   const [isRightSidebarOpen, setRightSidebarOpen] = useState(true);
+  const [rightPanelTab, setRightPanelTab] = useState<'inspector' | 'assets'>('inspector');
 
   const [activeMenu, setActiveMenu] = useState<string | null>(null); // For Top Bar Menus
   const [isProcessingPptx, setIsProcessingPptx] = useState(false);
@@ -470,6 +478,7 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
   
   const canvasRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const backgroundInputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const { showToast } = useToast();
 
@@ -605,6 +614,34 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
           return el;
       });
       updateSlides(newSlides);
+  };
+
+  const updateSelectedElements = (mutator: (el: ReportElement) => ReportElement) => {
+      if (selectedElementIds.size === 0) return;
+      const newSlides = slides.map((slide, idx) => {
+          if (idx !== activeSlideIdx) return slide;
+          return {
+              ...slide,
+              elements: slide.elements.map(el => selectedElementIds.has(el.id) ? mutator(el) : el)
+          };
+      });
+      updateSlides(newSlides);
+  };
+
+  const updateSelectedStyle = (stylePatch: Partial<ReportElementStyle>) => {
+      updateSelectedElements(el => ({ ...el, style: { ...el.style, ...stylePatch } }));
+  };
+
+  const updateSlideBackground = (value: string) => {
+      const newSlides = slides.map((slide, idx) => idx === activeSlideIdx ? { ...slide, background: value } : slide);
+      updateSlides(newSlides);
+  };
+
+  const handleBackgroundUpload = (file: File | null) => {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => updateSlideBackground(reader.result as string);
+      reader.readAsDataURL(file);
   };
 
   const deleteSelection = () => {
@@ -1637,6 +1674,288 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
       );
   };
 
+  const renderColorPalette = (onPick: (c: string) => void) => (
+      <div className="grid grid-cols-8 gap-1 mt-2">
+          {PPTIST_THEME_COLORS.map(color => (
+              <button
+                key={color}
+                className="w-6 h-6 rounded border border-gray-200 hover:shadow-inner"
+                style={{ background: color }}
+                title={color}
+                onClick={() => onPick(color)}
+              />
+          ))}
+      </div>
+  );
+
+  const renderInspectorPanel = () => {
+      if (primaryElement) {
+          const numericFontSize = primaryElement.style?.fontSize ? parseInt(primaryElement.style.fontSize, 10) : 24;
+          const numericLineHeight = primaryElement.style?.lineHeight ? parseInt(primaryElement.style.lineHeight, 10) : 28;
+          const numericLetterSpacing = primaryElement.style?.letterSpacing ? parseFloat(primaryElement.style.letterSpacing) : 0;
+          const opacityValue = primaryElement.style?.opacity ?? 1;
+          return (
+              <div className="space-y-4 text-xs text-gray-700">
+                  <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2 font-semibold text-gray-800">
+                          <SlidersHorizontal className="w-4 h-4 text-blue-500" />
+                          <span>Inspector</span>
+                      </div>
+                      <span className="text-[10px] text-gray-400 uppercase">{primaryElement.type}</span>
+                  </div>
+
+                  <div className="space-y-2 p-3 bg-gray-50 rounded border border-gray-100">
+                      <div className="flex items-center justify-between mb-1 text-[11px] font-semibold text-gray-600">
+                          <span>Position & Size</span>
+                          <div className="space-x-1">
+                              <button onClick={() => updateSelectedElements(el => ({ ...el, x: (CANVAS_WIDTH - el.w) / 2 }))} className="px-2 py-1 rounded bg-white border border-gray-200 hover:border-blue-400">Center X</button>
+                              <button onClick={() => updateSelectedElements(el => ({ ...el, y: (CANVAS_HEIGHT - el.h) / 2 }))} className="px-2 py-1 rounded bg-white border border-gray-200 hover:border-blue-400">Center Y</button>
+                          </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                          {[['X', primaryElement.x, (val: number) => updateSelectedElements(el => ({ ...el, x: val }))],
+                            ['Y', primaryElement.y, (val: number) => updateSelectedElements(el => ({ ...el, y: val }))],
+                            ['Width', primaryElement.w, (val: number) => updateSelectedElements(el => ({ ...el, w: val }))],
+                            ['Height', primaryElement.h, (val: number) => updateSelectedElements(el => ({ ...el, h: val }))]].map(([label, value, handler], idx) => (
+                              <label key={idx} className="text-[11px] text-gray-600 flex flex-col space-y-1">
+                                  <span>{label}</span>
+                                  <input
+                                    type="number"
+                                    className="h-7 px-2 border border-gray-200 rounded bg-white"
+                                    value={value as number}
+                                    onChange={(e) => (handler as (v: number) => void)(parseFloat(e.target.value) || 0)}
+                                  />
+                              </label>
+                          ))}
+                      </div>
+                      <label className="block text-[11px] text-gray-600">Rotation
+                          <input
+                            type="range"
+                            min={-180}
+                            max={180}
+                            value={primaryElement.style?.rotation || 0}
+                            onChange={(e) => updateSelectedStyle({ rotation: parseInt(e.target.value, 10) })}
+                            className="w-full accent-blue-500"
+                          />
+                      </label>
+                      <label className="block text-[11px] text-gray-600">Opacity
+                          <input
+                            type="range"
+                            min={0}
+                            max={1}
+                            step={0.05}
+                            value={opacityValue}
+                            onChange={(e) => updateSelectedStyle({ opacity: parseFloat(e.target.value) })}
+                            className="w-full accent-blue-500"
+                          />
+                      </label>
+                  </div>
+
+                  <div className="space-y-2 p-3 bg-gray-50 rounded border border-gray-100">
+                      <div className="flex items-center space-x-2 text-[11px] font-semibold text-gray-600">
+                          <Palette className="w-4 h-4 text-blue-500" />
+                          <span>Appearance</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                          <label className="text-[11px] text-gray-600 flex flex-col space-y-1">Fill
+                              <input
+                                type="color"
+                                className="h-8 border border-gray-200 rounded"
+                                value={primaryElement.style?.fill || '#3B82F6'}
+                                onChange={(e) => updateSelectedStyle({ fill: e.target.value })}
+                              />
+                          </label>
+                          <label className="text-[11px] text-gray-600 flex flex-col space-y-1">Stroke
+                              <input
+                                type="color"
+                                className="h-8 border border-gray-200 rounded"
+                                value={primaryElement.style?.stroke || '#2563EB'}
+                                onChange={(e) => updateSelectedStyle({ stroke: e.target.value })}
+                              />
+                          </label>
+                          <label className="text-[11px] text-gray-600 flex flex-col space-y-1">Stroke Width
+                              <input
+                                type="number"
+                                className="h-7 px-2 border border-gray-200 rounded bg-white"
+                                value={primaryElement.style?.strokeWidth ?? 2}
+                                onChange={(e) => updateSelectedStyle({ strokeWidth: parseInt(e.target.value, 10) || 0 })}
+                              />
+                          </label>
+                          <label className="text-[11px] text-gray-600 flex flex-col space-y-1">Corner Radius
+                              <input
+                                type="number"
+                                className="h-7 px-2 border border-gray-200 rounded bg-white"
+                                value={primaryElement.style?.borderRadius ?? 0}
+                                onChange={(e) => updateSelectedStyle({ borderRadius: parseInt(e.target.value, 10) || 0 })}
+                              />
+                          </label>
+                      </div>
+                      {renderColorPalette((color) => updateSelectedStyle({ fill: color }))}
+                      <div className="flex items-center justify-between pt-1">
+                          <label className="inline-flex items-center space-x-2 text-[11px] text-gray-600">
+                              <input type="checkbox" checked={!!primaryElement.style?.shadow} onChange={() => updateSelectedStyle({ shadow: !primaryElement.style?.shadow })} />
+                              <span>Shadow</span>
+                          </label>
+                          <button
+                            className="px-2 py-1 bg-white border border-gray-200 rounded text-[11px] hover:border-blue-400"
+                            onClick={() => updateSelectedStyle({ fill: '#ffffff', stroke: '#111827', strokeWidth: 1, opacity: 1 })}
+                          >
+                            Reset
+                          </button>
+                      </div>
+                  </div>
+
+                  {primaryElement.type === 'text' && (
+                      <div className="space-y-2 p-3 bg-gray-50 rounded border border-gray-100">
+                          <div className="flex items-center space-x-2 text-[11px] font-semibold text-gray-600">
+                              <Type className="w-4 h-4 text-blue-500" />
+                              <span>Typography</span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                              <label className="text-[11px] text-gray-600 flex flex-col space-y-1">Font
+                                  <select
+                                    className="h-7 px-2 border border-gray-200 rounded bg-white"
+                                    value={primaryElement.style?.fontFamily || 'Arial'}
+                                    onChange={(e) => updateSelectedStyle({ fontFamily: e.target.value })}
+                                  >
+                                      {['Arial', 'Inter', 'Roboto', 'Georgia', 'Times New Roman'].map(font => (
+                                          <option key={font} value={font}>{font}</option>
+                                      ))}
+                                  </select>
+                              </label>
+                              <label className="text-[11px] text-gray-600 flex flex-col space-y-1">Font Size
+                                  <input
+                                    type="number"
+                                    className="h-7 px-2 border border-gray-200 rounded bg-white"
+                                    value={numericFontSize}
+                                    onChange={(e) => updateSelectedStyle({ fontSize: `${parseInt(e.target.value, 10) || 0}px` })}
+                                  />
+                              </label>
+                              <label className="text-[11px] text-gray-600 flex flex-col space-y-1">Line Height
+                                  <input
+                                    type="number"
+                                    className="h-7 px-2 border border-gray-200 rounded bg-white"
+                                    value={numericLineHeight}
+                                    onChange={(e) => updateSelectedStyle({ lineHeight: `${parseInt(e.target.value, 10) || 0}px` })}
+                                  />
+                              </label>
+                              <label className="text-[11px] text-gray-600 flex flex-col space-y-1">Letter Spacing
+                                  <input
+                                    type="number"
+                                    className="h-7 px-2 border border-gray-200 rounded bg-white"
+                                    value={numericLetterSpacing}
+                                    onChange={(e) => updateSelectedStyle({ letterSpacing: `${parseFloat(e.target.value) || 0}px` })}
+                                  />
+                              </label>
+                          </div>
+                          <div className="flex items-center space-x-1">
+                              <button onClick={() => updateSelectedStyle({ fontWeight: primaryElement.style?.fontWeight === 'bold' ? 'normal' : 'bold' })} className={`px-2 py-1 rounded border ${primaryElement.style?.fontWeight === 'bold' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-400'}`}>Bold</button>
+                              <button onClick={() => updateSelectedStyle({ fontStyle: primaryElement.style?.fontStyle === 'italic' ? 'normal' : 'italic' })} className={`px-2 py-1 rounded border ${primaryElement.style?.fontStyle === 'italic' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-400'}`}>Italic</button>
+                              <button onClick={() => updateSelectedStyle({ textDecoration: primaryElement.style?.textDecoration === 'underline' ? 'none' : 'underline' })} className={`px-2 py-1 rounded border ${primaryElement.style?.textDecoration === 'underline' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-400'}`}>Underline</button>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                              <button onClick={() => updateSelectedStyle({ textAlign: 'left' })} className={`p-1.5 rounded border ${primaryElement.style?.textAlign === 'left' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-400'}`}><AlignLeft className="w-4 h-4" /></button>
+                              <button onClick={() => updateSelectedStyle({ textAlign: 'center' })} className={`p-1.5 rounded border ${primaryElement.style?.textAlign === 'center' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-400'}`}><AlignCenter className="w-4 h-4" /></button>
+                              <button onClick={() => updateSelectedStyle({ textAlign: 'right' })} className={`p-1.5 rounded border ${primaryElement.style?.textAlign === 'right' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-400'}`}><AlignRight className="w-4 h-4" /></button>
+                              <label className="text-[11px] text-gray-600 flex items-center space-x-2 ml-2">
+                                  <span>Text</span>
+                                  <input type="color" className="w-7 h-7 border border-gray-200 rounded" value={primaryElement.style?.color || '#111827'} onChange={(e) => updateSelectedStyle({ color: e.target.value })} />
+                              </label>
+                          </div>
+                      </div>
+                  )}
+
+                  {primaryElement.type === 'image' && (
+                      <div className="space-y-2 p-3 bg-gray-50 rounded border border-gray-100 text-[11px] text-gray-600">
+                          <div className="flex items-center space-x-2 font-semibold text-gray-600">
+                              <ImageIcon className="w-4 h-4 text-blue-500" />
+                              <span>Image Fill</span>
+                          </div>
+                          <p className="text-gray-500">Use corner radius or opacity above to match PPTist styling.</p>
+                      </div>
+                  )}
+              </div>
+          );
+      }
+
+      return (
+          <div className="space-y-4 text-xs text-gray-700">
+              <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2 font-semibold text-gray-800">
+                      <SunMedium className="w-4 h-4 text-blue-500" />
+                      <span>Slide Background</span>
+                  </div>
+                  <button
+                    onClick={() => updateSlideBackground('#ffffff')}
+                    className="text-[11px] text-gray-500 hover:text-blue-600"
+                  >Reset</button>
+              </div>
+              <div className="grid grid-cols-5 gap-2">
+                  {PPTIST_THEME_COLORS.slice(0, 10).map(color => (
+                      <button
+                        key={color}
+                        className="h-10 rounded border border-gray-200 hover:border-blue-400"
+                        style={{ background: color }}
+                        onClick={() => updateSlideBackground(color)}
+                        title={color}
+                      />
+                  ))}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                  {PPTIST_GRADIENTS.map(grad => (
+                      <button
+                        key={grad}
+                        className="h-12 rounded border border-gray-200 hover:border-blue-400"
+                        style={{ backgroundImage: grad }}
+                        onClick={() => updateSlideBackground(grad)}
+                        title="Gradient"
+                      />
+                  ))}
+              </div>
+              <div className="space-y-2 p-3 bg-gray-50 rounded border border-gray-100 text-[11px] text-gray-600">
+                  <div className="flex items-center justify-between">
+                      <span className="font-semibold text-gray-700">Use Image</span>
+                      <div className="flex items-center space-x-2">
+                          <button
+                            className="px-2 py-1 bg-white border border-gray-200 rounded hover:border-blue-400"
+                            onClick={() => backgroundInputRef.current?.click()}
+                          >Upload</button>
+                          {activeSlide.background && (
+                              <button
+                                className="px-2 py-1 text-red-500 border border-red-100 rounded hover:bg-red-50"
+                                onClick={() => updateSlideBackground('#ffffff')}
+                              >Clear</button>
+                          )}
+                      </div>
+                  </div>
+                  <input
+                    ref={backgroundInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => handleBackgroundUpload(e.target.files?.[0] || null)}
+                  />
+                  <p className="text-gray-500">Inspired by PPTist: drop branded wallpapers or gradients to keep slides consistent.</p>
+              </div>
+
+              <div className="space-y-2 p-3 bg-gray-50 rounded border border-gray-100 text-[11px] text-gray-600">
+                  <div className="flex items-center space-x-2 font-semibold text-gray-700">
+                      <Droplets className="w-4 h-4 text-blue-500" />
+                      <span>Layout Helpers</span>
+                  </div>
+                  <label className="inline-flex items-center space-x-2">
+                      <input type="checkbox" checked={showGrid} onChange={() => setShowGrid(!showGrid)} />
+                      <span>Show grid & snap like PPTist</span>
+                  </label>
+                  <div className="flex items-center space-x-2 text-[11px]">
+                      <button onClick={() => setZoomLevel(1)} className="px-2 py-1 bg-white border border-gray-200 rounded hover:border-blue-400">100%</button>
+                      <button onClick={() => setZoomLevel(0.5)} className="px-2 py-1 bg-white border border-gray-200 rounded hover:border-blue-400">Fit</button>
+                  </div>
+              </div>
+          </div>
+      );
+  };
+
   return (
     <div className="flex flex-col h-full bg-gray-100 font-sans" onClick={() => setActiveMenu(null)}>
 
@@ -1969,42 +2288,60 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
 
           {/* Right: Asset Library */}
           <div className={`${isRightSidebarOpen ? 'w-60' : 'w-0'} bg-white border-l border-gray-200 flex flex-col z-10 shadow-sm transition-all duration-300 overflow-hidden relative`}>
-              
+
               {/* Floating Toggle Button (Always Visible) */}
-              <button 
-                onClick={() => setRightSidebarOpen(!isRightSidebarOpen)} 
+              <button
+                onClick={() => setRightSidebarOpen(!isRightSidebarOpen)}
                 className="absolute top-2 -left-3 z-50 bg-white border border-gray-200 rounded-full p-0.5 shadow-sm text-gray-500 hover:text-gray-900"
                 title={isRightSidebarOpen ? "Collapse Assets" : "Expand Assets"}
               >
                  {isRightSidebarOpen ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
               </button>
 
-              <div className="h-10 border-b border-gray-100 flex items-center px-4 bg-gray-50 flex-shrink-0">
-                  <span className="text-xs font-bold text-gray-600 uppercase tracking-wider">Saved Charts</span>
+              <div className="h-10 border-b border-gray-100 flex items-center px-2 bg-gray-50 flex-shrink-0">
+                  <div className="flex space-x-2 text-xs font-semibold text-gray-600">
+                      <button
+                        onClick={() => setRightPanelTab('inspector')}
+                        className={`px-3 py-1 rounded ${rightPanelTab === 'inspector' ? 'bg-white shadow text-blue-600' : 'hover:bg-white'}`}
+                      >Inspector</button>
+                      <button
+                        onClick={() => setRightPanelTab('assets')}
+                        className={`px-3 py-1 rounded ${rightPanelTab === 'assets' ? 'bg-white shadow text-blue-600' : 'hover:bg-white'}`}
+                      >Assets</button>
+                  </div>
+                  {rightPanelTab === 'assets' && (
+                      <span className="ml-auto text-[11px] text-gray-500 uppercase">Saved Charts</span>
+                  )}
               </div>
               <div className="flex-1 overflow-y-auto p-3 space-y-2">
-                  {project.dashboard?.map(widget => (
-                      <div 
-                          key={widget.id}
-                          className="bg-white border border-gray-200 rounded p-2 hover:border-blue-400 cursor-pointer shadow-sm group"
-                          onClick={() => addElement('widget', widget.id)}
-                      >
-                          <div className="flex justify-between items-center mb-1">
-                             <span className="text-[10px] font-bold text-gray-600 truncate">{widget.title}</span>
-                             <Plus className="w-3 h-3 text-blue-500 opacity-0 group-hover:opacity-100" />
-                          </div>
-                          <div className="h-16 bg-gray-50 rounded flex items-center justify-center pointer-events-none">
-                              {widget.type === 'bar' && <BarChart3 className="w-6 h-6 text-blue-300" />}
-                              {widget.type === 'pie' && <PieChart className="w-6 h-6 text-green-300" />}
-                              {widget.type === 'line' && <LineChart className="w-6 h-6 text-purple-300" />}
-                              {widget.type === 'kpi' && <Hash className="w-6 h-6 text-orange-300" />}
-                          </div>
-                      </div>
-                  ))}
-                  {(!project.dashboard || project.dashboard.length === 0) && (
-                      <div className="text-center py-4 text-xs text-gray-400">
-                          No charts found. Create some in Analytics.
-                      </div>
+                  {rightPanelTab === 'inspector' ? (
+                      renderInspectorPanel()
+                  ) : (
+                      <>
+                          {project.dashboard?.map(widget => (
+                              <div
+                                  key={widget.id}
+                                  className="bg-white border border-gray-200 rounded p-2 hover:border-blue-400 cursor-pointer shadow-sm group"
+                                  onClick={() => addElement('widget', widget.id)}
+                              >
+                                  <div className="flex justify-between items-center mb-1">
+                                     <span className="text-[10px] font-bold text-gray-600 truncate">{widget.title}</span>
+                                     <Plus className="w-3 h-3 text-blue-500 opacity-0 group-hover:opacity-100" />
+                                  </div>
+                                  <div className="h-16 bg-gray-50 rounded flex items-center justify-center pointer-events-none">
+                                      {widget.type === 'bar' && <BarChart3 className="w-6 h-6 text-blue-300" />}
+                                      {widget.type === 'pie' && <PieChart className="w-6 h-6 text-green-300" />}
+                                      {widget.type === 'line' && <LineChart className="w-6 h-6 text-purple-300" />}
+                                      {widget.type === 'kpi' && <Hash className="w-6 h-6 text-orange-300" />}
+                                  </div>
+                              </div>
+                          ))}
+                          {(!project.dashboard || project.dashboard.length === 0) && (
+                              <div className="text-center py-4 text-xs text-gray-400">
+                                  No charts found. Create some in Analytics.
+                              </div>
+                          )}
+                      </>
                   )}
               </div>
           </div>

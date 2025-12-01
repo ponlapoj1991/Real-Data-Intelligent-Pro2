@@ -307,12 +307,15 @@ export interface ReportElementStyle {
   textDecoration?: string;
   textAlign?: 'left' | 'center' | 'right' | 'justify';
   color?: string; // Text color
-  
+  lineHeight?: string;
+  letterSpacing?: string;
+
   // Appearance
   backgroundColor?: string;
   fill?: string; // Shape fill
   stroke?: string; // Border color
   strokeWidth?: number;
+  borderRadius?: number;
   opacity?: number;
   rotation?: number;
   shadow?: boolean;
