@@ -3,8 +3,10 @@
  * Main toolbar with element insertion and tools
  */
 
-import React from 'react';
+import React, { useRef } from 'react';
 import { useSlideStore } from '../../store/useSlideStore';
+import { importPPTX } from '../../utils/pptxImport';
+import { exportToPPTX } from '../../utils/pptxExport';
 import {
   Type,
   Image as ImageIcon,
@@ -22,7 +24,47 @@ import {
 } from 'lucide-react';
 
 export const Toolbar: React.FC = () => {
-  const { undo, redo, presentation } = useSlideStore();
+  const { undo, redo, presentation, loadPresentation } = useSlideStore();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImportPPTX = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const imported = await importPPTX(file);
+      loadPresentation(imported);
+      console.log('PPTX imported successfully:', imported);
+      alert('PPTX imported successfully!');
+    } catch (error) {
+      console.error('Import error:', error);
+      alert('Failed to import PPTX file. See console for details.');
+    }
+
+    // Reset input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleExportPPTX = async () => {
+    if (!presentation) {
+      alert('No presentation to export');
+      return;
+    }
+
+    try {
+      await exportToPPTX(presentation);
+      console.log('PPTX exported successfully');
+    } catch (error) {
+      console.error('Export error:', error);
+      alert('Failed to export PPTX file. See console for details.');
+    }
+  };
 
   const handleAddText = () => {
     useSlideStore.getState().addElement({
@@ -81,9 +123,19 @@ export const Toolbar: React.FC = () => {
 
   return (
     <div className="h-14 bg-white border-b border-gray-200 flex items-center px-4 gap-2">
+      {/* Hidden file input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".pptx"
+        onChange={handleFileChange}
+        className="hidden"
+      />
+
       {/* File Actions */}
       <div className="flex items-center gap-1 border-r border-gray-300 pr-2 mr-2">
         <button
+          onClick={handleImportPPTX}
           className="p-2 rounded hover:bg-gray-100 text-gray-600"
           title="Upload PPTX"
         >
@@ -96,6 +148,7 @@ export const Toolbar: React.FC = () => {
           <Save size={18} />
         </button>
         <button
+          onClick={handleExportPPTX}
           className="p-2 rounded hover:bg-gray-100 text-gray-600"
           title="Export PPTX"
         >
