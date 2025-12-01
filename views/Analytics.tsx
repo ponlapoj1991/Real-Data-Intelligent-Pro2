@@ -42,6 +42,10 @@ const getWidgetColor = (widget: DashboardWidget, key: string, index: number) => 
     return palette[index % palette.length] || widget.color || COLORS[0];
 };
 
+const getCategoryColor = (widget: DashboardWidget, key: string, index: number) => {
+    return widget.categoryConfig?.[key]?.color || getWidgetColor(widget, key, index);
+};
+
 const formatWidgetValue = (widget: DashboardWidget, val: number) => {
     if (widget.valueFormat === 'percent') return `${(val * 100).toFixed(1)}%`;
     if (widget.valueFormat === 'currency') return new Intl.NumberFormat('en', { style: 'currency', currency: 'USD', maximumFractionDigits: 1 }).format(val);
@@ -782,7 +786,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                                     onClick={(barData: any, index: number, e: any) => handleChartClick(e, widget, barData.name)}
                                 >
                                     {(data as any[]).map((entry, idx) => (
-                                        <Cell key={entry.name} fill={getWidgetColor(widget, entry.name, idx)} />
+                                        <Cell key={entry.name} fill={getCategoryColor(widget, entry.name, idx)} />
                                     ))}
                                     {showValues && <LabelList dataKey="value" position={isHorizontal ? 'right' : 'top'} formatter={labelFormatter} />}
                                 </Bar>
@@ -809,7 +813,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                               labelLine={showValues}
                           >
                               {(data as any[]).map((entry, index) => (
-                                  <Cell key={`cell-${index}`} fill={getWidgetColor(widget, entry.name, index)} />
+                                  <Cell key={`cell-${index}`} fill={getCategoryColor(widget, entry.name, index)} />
                               ))}
                           </Pie>
                           <Tooltip contentStyle={{borderRadius: '8px'}} />
@@ -1184,10 +1188,10 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       {/* Dashboard Grid */}
       <div ref={dashboardRef} className="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-10">
           {widgets.map((widget) => (
-              <div 
-                key={widget.id} 
+              <div
+                key={widget.id}
                 className={`report-widget bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col ${widget.width === 'full' ? 'lg:col-span-2' : ''} transition-all hover:shadow-md group relative`}
-                style={{ minHeight: '320px' }}
+                style={{ minHeight: '420px' }}
               >
                   {/* Widget Header */}
                   <div className="flex justify-between items-start mb-4">

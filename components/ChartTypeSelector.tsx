@@ -47,7 +47,6 @@ const ChartTypeSelector: React.FC<ChartTypeSelectorProps> = ({
 
   const handleSelect = (chartType: ChartType) => {
     onSelect(chartType);
-    onClose();
   };
 
   return (
