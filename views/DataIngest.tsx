@@ -48,6 +48,9 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, kind,
   const { showToast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
+  const [isNameModalOpen, setIsNameModalOpen] = useState(false);
+  const [tableName, setTableName] = useState('');
+  const [nameError, setNameError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const sources = useMemo(() => getDataSourcesByKind(normalizedProject, kind).sort((a, b) => b.updatedAt - a.updatedAt), [kind, normalizedProject]);
@@ -64,16 +67,40 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, kind,
     await saveProject(updated);
   };
 
+  const resetFileInput = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const triggerFilePicker = () => {
+    resetFileInput();
+    fileInputRef.current?.click();
+  };
+
+  const submitNewTableName = () => {
+    const trimmed = tableName.trim();
+    if (!trimmed) {
+      setNameError('Please enter a table name.');
+      return;
+    }
+    setPendingUpload({ mode: 'new', name: trimmed });
+    setIsNameModalOpen(false);
+    setTimeout(() => triggerFilePicker(), 10);
+  };
+
   const startUpload = (config: PendingUpload) => {
     if (config.mode === 'new') {
       const suggested = kind === 'ingestion' ? `Table ${sources.length + 1}` : `Prepared Table ${sources.length + 1}`;
-      const name = prompt('Name this table', suggested) || '';
-      if (!name.trim()) return;
-      setPendingUpload({ ...config, name });
-    } else {
-      setPendingUpload(config);
+      setTableName(suggested);
+      setNameError('');
+      setPendingUpload({ mode: 'new' });
+      setIsNameModalOpen(true);
+      return;
     }
-    fileInputRef.current?.click();
+
+    setPendingUpload(config);
+    triggerFilePicker();
   };
 
   const processIncomingData = async (rows: RawRow[], upload: PendingUpload) => {
@@ -142,6 +169,61 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, kind,
         onChange={(e) => handleFileUpload(e.target.files)}
         className="hidden"
       />
+
+      {isNameModalOpen && (
+        <div className="fixed inset-0 bg-black/40 z-40 flex items-center justify-center px-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 space-y-4">
+            <div className="space-y-1">
+              <p className="text-sm uppercase tracking-wide text-blue-600 font-semibold">New table</p>
+              <h3 className="text-xl font-bold text-gray-900">Name your table</h3>
+              <p className="text-sm text-gray-500">
+                Choose a clear, professional name. You&apos;ll pick the file to upload right after this step.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-gray-700">Table name</label>
+              <input
+                autoFocus
+                value={tableName}
+                onChange={(e) => {
+                  setTableName(e.target.value);
+                  setNameError('');
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    submitNewTableName();
+                  }
+                }}
+                className={`w-full rounded-lg border ${nameError ? 'border-red-300 focus:ring-red-200' : 'border-gray-200 focus:ring-blue-200'} px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2`}
+                placeholder="Customer Orders Q1"
+              />
+              {nameError && <p className="text-xs text-red-600">{nameError}</p>}
+            </div>
+
+            <div className="flex justify-end space-x-3 pt-2">
+              <button
+                onClick={() => {
+                  setIsNameModalOpen(false);
+                  setPendingUpload(null);
+                }}
+                className="px-3 py-2 text-sm rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  submitNewTableName();
+                }}
+                className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 shadow-sm"
+              >
+                Continue to upload
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="flex items-center justify-between">
         <div>
