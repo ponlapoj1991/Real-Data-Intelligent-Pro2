@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, UploadCloud, RefreshCcw, Pencil, Star, ArrowRight, Link as LinkIcon } from 'lucide-react';
+import { Plus, RefreshCcw, Pencil, Star } from 'lucide-react';
 import { DataSource, DataSourceKind, Project, RawRow } from '../types';
 import { useToast } from '../components/ToastProvider';
 import { useExcelWorker } from '../hooks/useExcelWorker';
-import { parseCsvUrl, inferColumns } from '../utils/excel';
+import { inferColumns } from '../utils/excel';
 import { ensureDataSources, getDataSourcesByKind, setActiveDataSource, updateDataSourceRows, upsertDataSource } from '../utils/dataSources';
 import { saveProject } from '../utils/storage-compat';
 
@@ -25,7 +25,7 @@ const titles: Record<DataSourceKind, { title: string; subtitle: string; empty: s
     title: 'Ingestion Data',
     subtitle: 'Upload raw files as reusable tables. Each feature can pick any table it needs.',
     empty: 'No ingestion tables yet. Upload a file to get started.',
-    helper: 'Use the upload button or drop a file below to create a table.',
+    helper: 'Use the upload button to create a table.',
   },
   prepared: {
     title: 'Preparation Data',
@@ -46,15 +46,13 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, kind,
   }, [needsNormalization, normalizedProject, onUpdateProject]);
 
   const { showToast } = useToast();
-  const [isDragging, setIsDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [importUrl, setImportUrl] = useState('');
   const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const sources = useMemo(() => getDataSourcesByKind(normalizedProject, kind).sort((a, b) => b.updatedAt - a.updatedAt), [kind, normalizedProject]);
 
-  const { parseFile, isProcessing, progress } = useExcelWorker();
+  const { parseFile } = useExcelWorker();
 
   const buildColumns = (rows: RawRow[]): ReturnType<typeof inferColumns> => {
     if (!rows.length) return [];
@@ -127,63 +125,30 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, kind,
     }
   };
 
-  const handleUrlImport = async () => {
-    if (!importUrl) return;
-    setIsLoading(true);
-    try {
-      const newData = await parseCsvUrl(importUrl);
-      await processIncomingData(newData, { mode: 'new', name: importUrl.split('/').pop() || 'Linked Table' });
-      setImportUrl('');
-      showToast('Import Successful', 'Data imported from link.', 'success');
-    } catch (err: any) {
-      console.error(err);
-      showToast('Link Import Failed', 'Ensure the link is a direct CSV or published Google Sheet CSV link.', 'error');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   const setActive = async (id: string) => {
     const updated = setActiveDataSource(normalizedProject, id);
     await persistProject(updated);
     showToast('Active table changed', 'Other features will now use this table.', 'info');
   };
 
-  const onDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const onDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-  };
-
-  const onDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    handleFileUpload(e.dataTransfer.files);
-  };
-
   const meta = titles[kind];
 
   return (
     <div className="p-8 max-w-6xl mx-auto space-y-6">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".xlsx, .xls, .csv"
+        onChange={(e) => handleFileUpload(e.target.files)}
+        className="hidden"
+      />
+
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">{meta.title}</h2>
           <p className="text-gray-500 text-sm">{meta.subtitle}</p>
         </div>
         <div className="flex items-center space-x-3">
-          {onNext && (
-            <button
-              onClick={onNext}
-              className="hidden md:inline-flex items-center text-sm font-semibold text-blue-600 hover:text-blue-700"
-            >
-              Continue
-              <ArrowRight className="w-4 h-4 ml-1" />
-            </button>
-          )}
           <button
             onClick={() => startUpload({ mode: 'new' })}
             className="inline-flex items-center px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium shadow-sm hover:bg-blue-700"
@@ -269,64 +234,6 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, kind,
         </div>
       </div>
 
-      <div
-        className={`border-2 border-dashed rounded-xl p-8 text-center transition-all duration-200 ease-in-out bg-white ${
-          isDragging ? 'border-blue-500 bg-blue-50 scale-[1.01]' : 'border-gray-300 hover:border-blue-400 hover:bg-gray-50'
-        }`}
-        onDragOver={onDragOver}
-        onDragLeave={onDragLeave}
-        onDrop={onDrop}
-      >
-        <div className="flex flex-col items-center space-y-3">
-          <div className="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center text-blue-600">
-            {isLoading || isProcessing ? <RefreshCcw className="w-6 h-6 animate-spin" /> : <UploadCloud className="w-6 h-6" />}
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-gray-900">
-              {isLoading || isProcessing ? 'Processing data...' : 'Drag & drop a .xlsx, .xls, or .csv file'}
-            </p>
-            <p className="text-xs text-gray-500">Files will create or update the selected table action.</p>
-          </div>
-          {(isProcessing && progress > 0) && (
-            <div className="w-full max-w-md mx-auto">
-              <div className="flex justify-between text-xs text-gray-600 mb-1">
-                <span>Parsing file...</span>
-                <span>{progress}%</span>
-              </div>
-              <div className="w-full bg-gray-200 rounded-full h-2">
-                <div className="bg-blue-600 h-2 rounded-full transition-all duration-300" style={{ width: `${progress}%` }}></div>
-              </div>
-            </div>
-          )}
-          <div className="flex items-center space-x-3">
-            <div className="relative inline-block">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".xlsx, .xls, .csv"
-                onChange={(e) => handleFileUpload(e.target.files)}
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-              />
-              <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-sm">Browse Files</button>
-            </div>
-            <div className="flex items-center space-x-2 text-xs text-gray-500">
-              <LinkIcon className="w-4 h-4" />
-              <input
-                value={importUrl}
-                onChange={(e) => setImportUrl(e.target.value)}
-                placeholder="Paste CSV or published Google Sheet link"
-                className="w-72 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
-              <button
-                onClick={handleUrlImport}
-                className="px-3 py-2 rounded-lg bg-gray-100 text-gray-700 text-xs font-medium hover:bg-gray-200"
-              >
-                Import
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
   );
 };
