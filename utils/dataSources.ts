@@ -95,6 +95,34 @@ export const updateDataSourceRows = (
   };
 };
 
+export const removeDataSource = (project: Project, sourceId: string): Project => {
+  const { project: normalized } = ensureDataSources(project);
+  const dataSources = (normalized.dataSources || []).filter((s) => s.id !== sourceId);
+
+  if (!dataSources.length) {
+    return {
+      ...normalized,
+      dataSources: [],
+      activeDataSourceId: undefined,
+      data: [],
+      columns: [],
+      lastModified: Date.now(),
+    };
+  }
+
+  const activeId = normalized.activeDataSourceId === sourceId ? dataSources[0].id : normalized.activeDataSourceId;
+  const active = dataSources.find((s) => s.id === activeId) || dataSources[0];
+
+  return {
+    ...normalized,
+    dataSources,
+    activeDataSourceId: active.id,
+    data: active.rows,
+    columns: active.columns,
+    lastModified: Date.now(),
+  };
+};
+
 const mergeColumns = (current: ColumnConfig[], incoming: ColumnConfig[]) => {
   const map: Record<string, ColumnConfig> = {};
   [...current, ...incoming].forEach((col) => {

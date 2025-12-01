@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, RefreshCcw, Pencil, Star } from 'lucide-react';
+import { Plus, RefreshCcw, Pencil, Star, Trash2, Loader2 } from 'lucide-react';
 import { DataSource, DataSourceKind, Project, RawRow } from '../types';
 import { useToast } from '../components/ToastProvider';
 import { useExcelWorker } from '../hooks/useExcelWorker';
 import { inferColumns } from '../utils/excel';
-import { ensureDataSources, getDataSourcesByKind, setActiveDataSource, updateDataSourceRows, upsertDataSource } from '../utils/dataSources';
+import { ensureDataSources, getDataSourcesByKind, removeDataSource, setActiveDataSource, updateDataSourceRows, upsertDataSource } from '../utils/dataSources';
 import { saveProject } from '../utils/storage-compat';
 
 interface DataIngestProps {
@@ -20,18 +20,16 @@ interface PendingUpload {
   name?: string;
 }
 
-const titles: Record<DataSourceKind, { title: string; subtitle: string; empty: string; helper?: string }> = {
+const titles: Record<DataSourceKind, { title: string; subtitle: string; empty: string }> = {
   ingestion: {
     title: 'Ingestion Data',
-    subtitle: 'Upload raw files as reusable tables. Each feature can pick any table it needs.',
+    subtitle: 'Upload raw files as reusable tables.',
     empty: 'No ingestion tables yet. Upload a file to get started.',
-    helper: 'Use the upload button to create a table.',
   },
   prepared: {
     title: 'Preparation Data',
-    subtitle: 'Data saved from features like Clean & Prep. Keep curated outputs neatly organized.',
+    subtitle: 'Data saved from features like Clean & Prep.',
     empty: 'No prepared tables yet. Save from Clean & Prep to populate this list.',
-    helper: 'You can still append or replace data for a prepared table from here.',
   },
 };
 
@@ -176,9 +174,7 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, kind,
             <div className="space-y-1">
               <p className="text-sm uppercase tracking-wide text-blue-600 font-semibold">New table</p>
               <h3 className="text-xl font-bold text-gray-900">Name your table</h3>
-              <p className="text-sm text-gray-500">
-                Choose a clear, professional name. You&apos;ll pick the file to upload right after this step.
-              </p>
+              <p className="text-sm text-gray-500">Set a table name before uploading your file.</p>
             </div>
 
             <div className="space-y-2">
@@ -225,20 +221,21 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, kind,
         </div>
       )}
 
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">{meta.title}</h2>
-          <p className="text-gray-500 text-sm">{meta.subtitle}</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">{meta.title}</h2>
+            <p className="text-gray-500 text-sm">{meta.subtitle}</p>
+          </div>
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={() => startUpload({ mode: 'new' })}
+              disabled={isLoading}
+              className="inline-flex items-center px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium shadow-sm hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              <Plus className="w-4 h-4 mr-1" /> Upload
+            </button>
+          </div>
         </div>
-        <div className="flex items-center space-x-3">
-          <button
-            onClick={() => startUpload({ mode: 'new' })}
-            className="inline-flex items-center px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium shadow-sm hover:bg-blue-700"
-          >
-            <Plus className="w-4 h-4 mr-1" /> Upload
-          </button>
-        </div>
-      </div>
 
       <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 text-sm text-gray-500">
@@ -246,8 +243,6 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, kind,
             <span className="text-xs uppercase tracking-wide text-gray-400">Overview</span>
             <span className="text-gray-300">•</span>
             <span>{sources.length} table{sources.length === 1 ? '' : 's'}</span>
-            {meta.helper && <span className="text-gray-300">•</span>}
-            {meta.helper && <span>{meta.helper}</span>}
           </div>
           <div className="flex items-center space-x-2 text-xs text-gray-400">
             <span>Rows per page</span>
@@ -298,15 +293,30 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, kind,
                   <div className="col-span-2 flex items-center justify-end space-x-2">
                     <button
                       onClick={() => startUpload({ mode: 'append', sourceId: source.id })}
-                      className="inline-flex items-center px-2.5 py-1.5 rounded-md border border-gray-200 text-gray-700 text-xs hover:border-blue-300 hover:text-blue-700"
+                      disabled={isLoading}
+                      className="inline-flex items-center px-2.5 py-1.5 rounded-md border border-gray-200 text-gray-700 text-xs hover:border-blue-300 hover:text-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <Pencil className="w-4 h-4 mr-1" /> Append
                     </button>
                     <button
                       onClick={() => startUpload({ mode: 'replace', sourceId: source.id })}
-                      className="inline-flex items-center px-2.5 py-1.5 rounded-md border border-gray-200 text-gray-700 text-xs hover:border-blue-300 hover:text-blue-700"
+                      disabled={isLoading}
+                      className="inline-flex items-center px-2.5 py-1.5 rounded-md border border-gray-200 text-gray-700 text-xs hover:border-blue-300 hover:text-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <RefreshCcw className="w-4 h-4 mr-1" /> Replace
+                    </button>
+                    <button
+                      onClick={async () => {
+                        const confirmed = confirm('Delete this table?');
+                        if (!confirmed) return;
+                        const updated = removeDataSource(normalizedProject, source.id);
+                        await persistProject(updated);
+                        showToast('Table deleted', `${source.name} has been removed.`, 'info');
+                      }}
+                      disabled={isLoading}
+                      className="inline-flex items-center px-2.5 py-1.5 rounded-md border border-red-100 text-red-600 text-xs hover:border-red-200 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Trash2 className="w-4 h-4 mr-1" /> Delete
                     </button>
                   </div>
                 </div>
@@ -315,6 +325,15 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, kind,
           )}
         </div>
       </div>
+
+      {isLoading && (
+        <div className="fixed inset-0 bg-black/30 z-30 flex items-center justify-center">
+          <div className="bg-white shadow-xl rounded-xl px-6 py-4 flex items-center space-x-3 text-gray-800">
+            <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+            <span className="text-sm font-medium">Uploading…</span>
+          </div>
+        </div>
+      )}
 
     </div>
   );
