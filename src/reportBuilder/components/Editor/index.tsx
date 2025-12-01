@@ -5,12 +5,16 @@
 
 import React, { useEffect } from 'react';
 import { useSlideStore } from '../../store/useSlideStore';
+import { useKeyboardShortcuts } from '../../hooks/useKeyboard';
 import { Toolbar } from './Toolbar';
 import { Thumbnails } from './Thumbnails';
 import { Canvas } from '../Canvas';
 
 export const Editor: React.FC = () => {
   const { presentation, createPresentation } = useSlideStore();
+
+  // Enable keyboard shortcuts
+  useKeyboardShortcuts();
 
   useEffect(() => {
     // Initialize presentation if none exists

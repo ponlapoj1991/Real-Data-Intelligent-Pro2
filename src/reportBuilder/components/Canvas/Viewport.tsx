@@ -7,6 +7,7 @@ import React, { useRef, useState, useCallback } from 'react';
 import { useSlideStore } from '../../store/useSlideStore';
 import { GridLines } from './GridLines';
 import { AlignmentGuides } from './AlignmentGuides';
+import { TransformBox } from './TransformBox';
 import { ElementRenderer } from '../Elements';
 
 interface ViewportProps {
@@ -31,6 +32,7 @@ export const Viewport: React.FC<ViewportProps> = ({ width, height }) => {
     selectedElementIds,
     selectElement,
     clearSelection,
+    updateElement,
   } = useSlideStore();
 
   const currentSlide = presentation?.slides.find(s => s.id === currentSlideId);
@@ -122,6 +124,30 @@ export const Viewport: React.FC<ViewportProps> = ({ width, height }) => {
             />
           ))}
         </div>
+
+        {/* Transform Boxes for Selected Elements */}
+        {selectedElementIds.map((elementId) => {
+          const element = currentSlide.elements.find((el) => el.id === elementId);
+          if (!element || element.lock) return null;
+
+          return (
+            <TransformBox
+              key={`transform-${elementId}`}
+              left={element.left}
+              top={element.top}
+              width={element.width}
+              height={element.height}
+              rotate={element.rotate}
+              locked={element.lock}
+              onTransform={(updates) => {
+                updateElement(elementId, updates);
+              }}
+              onTransformEnd={() => {
+                useSlideStore.getState().saveHistory();
+              }}
+            />
+          );
+        })}
 
         {/* Alignment Guides */}
         <AlignmentGuides
