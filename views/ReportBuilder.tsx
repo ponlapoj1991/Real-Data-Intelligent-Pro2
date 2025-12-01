@@ -8,7 +8,8 @@ import {
     BringToFront, SendToBack, PaintBucket, Palette,
     ChevronLeft, ChevronRight, BarChart3, PieChart, LineChart, Activity, Hash, Cloud, Table,
     Undo2, Redo2, Square, Circle, Triangle, ArrowRight, Minus, Star, Highlighter, Copy, Move, RotateCw, Image as ImageIcon,
-    FileText, Settings, Presentation, PanelRightClose, PanelRightOpen, FileInput, SlidersHorizontal, Droplets, SunMedium
+    FileText, Settings, Presentation, PanelRightClose, PanelRightOpen, FileInput, SlidersHorizontal, Droplets, SunMedium,
+    Eye, EyeOff, Lock, Unlock, ClipboardPaste
 } from 'lucide-react';
 import { saveProject } from '../utils/storage-compat';
 import { generateCustomReport } from '../utils/report';
@@ -85,6 +86,17 @@ const processDataForWidget = (widget: DashboardWidget, rawData: RawRow[]) => {
     let result = Object.keys(groups).map(k => ({ name: k, value: groups[k] }));
     result.sort((a, b) => b.value - a.value);
     return { data: result.slice(0, widget.limit || 20), isStack: false };
+};
+
+const getElementLabel = (el: ReportElement) => {
+    if (el.name) return el.name;
+    if (el.type === 'text') return 'Text';
+    if (el.type === 'image') return 'Image';
+    if (el.type === 'shape') return el.shapeType ? `${el.shapeType[0].toUpperCase()}${el.shapeType.slice(1)}` : 'Shape';
+    if (el.type === 'widget') return 'Chart';
+    if (el.type === 'table') return 'Table';
+    if (el.type === 'chart') return 'Embedded Chart';
+    return 'Layer';
 };
 
 // --- PPTX Parser Helpers ---
@@ -237,8 +249,8 @@ const SlideThumbnail: React.FC<{ slide: ReportSlide, project: Project, data: Raw
                 }}
             >
                 {slide.background?.startsWith('data:image') && <img src={slide.background} className="absolute inset-0 w-full h-full object-cover" />}
-                {slide.elements.map(el => (
-                    <div 
+                {slide.elements.filter(el => !el.hidden).map(el => (
+                    <div
                         key={el.id}
                         style={{
                             position: 'absolute',
@@ -270,7 +282,7 @@ const ExportSlideView: React.FC<{ slide: ReportSlide, project: Project, data: Ra
             {slide.background?.startsWith('data:image') && (
                 <img src={slide.background} className="absolute inset-0 w-full h-full object-cover" />
             )}
-            {slide.elements.map(el => (
+            {slide.elements.filter(el => !el.hidden).map(el => (
                 <div
                     key={el.id}
                     style={{
@@ -292,6 +304,7 @@ const ElementContent: React.FC<{ el: ReportElement, project: Project, data: RawR
     const commonStyle: React.CSSProperties = {
         width: '100%', height: '100%',
         opacity: el.style?.opacity,
+        boxShadow: el.style?.shadow ? '0 10px 30px rgba(0,0,0,0.12)' : undefined,
         overflow: 'hidden', // Essential for PPT fidelity
     };
 
@@ -462,6 +475,8 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
   const [slides, setSlides] = useState<ReportSlide[]>(project.reportConfig || [{ id: 'slide-1', elements: [] }]);
   const [activeSlideIdx, setActiveSlideIdx] = useState(0);
   const [selectedElementIds, setSelectedElementIds] = useState<Set<string>>(new Set());
+
+  const [copiedStyle, setCopiedStyle] = useState<ReportElementStyle | null>(null);
   
   const [zoomLevel, setZoomLevel] = useState(0.8);
   const [showGrid, setShowGrid] = useState(false); 
@@ -566,6 +581,7 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
   const addElement = (type: 'text' | 'shape' | 'image' | 'widget', subType?: any, extra?: any) => {
       const newElement: ReportElement = {
           id: `${type}-${Date.now()}`,
+          name: type === 'text' ? 'Text' : type === 'shape' ? 'Shape' : type === 'image' ? 'Image' : type === 'widget' ? 'Chart' : 'Layer',
           type,
           x: CANVAS_WIDTH / 2 - 150,
           y: CANVAS_HEIGHT / 2 - 100,
@@ -644,12 +660,90 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
       reader.readAsDataURL(file);
   };
 
+  const toggleElementLock = (id: string) => {
+      const newSlides = slides.map((slide, idx) => {
+          if (idx !== activeSlideIdx) return slide;
+          return {
+              ...slide,
+              elements: slide.elements.map(el => el.id === id ? { ...el, locked: !el.locked } : el)
+          };
+      });
+      updateSlides(newSlides);
+  };
+
+  const toggleElementVisibility = (id: string) => {
+      const newSlides = slides.map((slide, idx) => {
+          if (idx !== activeSlideIdx) return slide;
+          return {
+              ...slide,
+              elements: slide.elements.map(el => el.id === id ? { ...el, hidden: !el.hidden } : el)
+          };
+      });
+      if (selectedElementIds.has(id)) {
+          const next = new Set(selectedElementIds);
+          next.delete(id);
+          setSelectedElementIds(next);
+      }
+      updateSlides(newSlides);
+  };
+
+  const renameElement = (id: string, name: string) => {
+      const newSlides = slides.map((slide, idx) => {
+          if (idx !== activeSlideIdx) return slide;
+          return {
+              ...slide,
+              elements: slide.elements.map(el => el.id === id ? { ...el, name } : el)
+          };
+      });
+      updateSlides(newSlides);
+  };
+
   const deleteSelection = () => {
       if (selectedElementIds.size === 0) return;
       const newSlides = [...slides];
-      newSlides[activeSlideIdx].elements = newSlides[activeSlideIdx].elements.filter(el => !selectedElementIds.has(el.id));
+      newSlides[activeSlideIdx].elements = newSlides[activeSlideIdx].elements.filter(el => !selectedElementIds.has(el.id) || el.locked);
       updateSlides(newSlides);
       setSelectedElementIds(new Set());
+  };
+
+  const duplicateSelection = (ids?: string[]) => {
+      const targets = ids || Array.from(selectedElementIds);
+      if (targets.length === 0) return;
+      const newSlides = [...slides];
+      const slide = newSlides[activeSlideIdx];
+      const newElements: ReportElement[] = [];
+      slide.elements.forEach(el => {
+          if (targets.includes(el.id)) {
+              const clone: ReportElement = {
+                  ...JSON.parse(JSON.stringify(el)),
+                  id: `${el.type}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                  x: el.x + 20,
+                  y: el.y + 20,
+                  locked: false,
+                  hidden: false,
+                  name: el.name ? `${el.name} copy` : undefined,
+                  zIndex: (slide.elements.length + newElements.length) + 1
+              };
+              newElements.push(clone);
+          }
+      });
+      slide.elements = [...slide.elements, ...newElements];
+      updateSlides(newSlides);
+      if (newElements.length) {
+          setSelectedElementIds(new Set(newElements.map(e => e.id)));
+      }
+  };
+
+  const copySelectedStyle = () => {
+      if (!primaryElement) return;
+      setCopiedStyle(primaryElement.style ? { ...primaryElement.style } : {});
+      showToast('Style copied', 'Layer appearance stored for reuse.', 'info');
+  };
+
+  const pasteCopiedStyle = () => {
+      if (!copiedStyle || selectedElementIds.size === 0) return;
+      updateSelectedStyle({ ...copiedStyle });
+      showToast('Style applied', 'Copied appearance pasted to selection.', 'success');
   };
 
   const bringToFront = () => {
@@ -792,7 +886,10 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
 
   const handleElementMouseDown = (e: React.MouseEvent, id: string) => {
       e.stopPropagation();
-      
+
+      const target = slides[activeSlideIdx].elements.find(el => el.id === id);
+      if (target?.locked) return;
+
       const isMulti = e.shiftKey || e.ctrlKey;
       let newSelection = new Set(selectedElementIds);
       
@@ -1614,6 +1711,7 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
   // --- Renderers ---
 
   const renderElement = (el: ReportElement) => {
+      if (el.hidden) return null;
       const isSelected = selectedElementIds.has(el.id);
       const isPrimary = el.id === primarySelectedId;
       const rot = el.style?.rotation || 0;
@@ -1628,12 +1726,13 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
                 left: el.x, top: el.y, width: el.w, height: el.h,
                 zIndex: el.zIndex,
                 transform: `rotate(${rot}deg)`,
-                cursor: 'move'
+                cursor: el.locked ? 'not-allowed' : 'move',
+                pointerEvents: el.locked ? 'none' : 'auto'
             }}
             className={`group ${isSelected ? 'z-[100]' : ''}`}
           >
               <div className={`w-full h-full relative ${isSelected ? 'outline outline-2 outline-blue-500' : 'hover:outline hover:outline-1 hover:outline-blue-300'}`}>
-                  
+
                   <ElementContent el={el} project={project} data={finalData} />
                   
                   {/* Text Edit Overlay */}
@@ -1688,6 +1787,62 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
       </div>
   );
 
+  const renderLayerList = () => {
+      const sorted = [...activeSlide.elements].sort((a, b) => (b.zIndex || 0) - (a.zIndex || 0));
+      return (
+          <div className="space-y-2 p-3 bg-gray-50 rounded border border-gray-100 text-xs text-gray-700">
+              <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2 font-semibold text-gray-800">
+                      <Layers className="w-4 h-4 text-blue-500" />
+                      <span>Layers</span>
+                  </div>
+                  <span className="text-[10px] text-gray-400">Top to bottom</span>
+              </div>
+              <div className="space-y-1 max-h-64 overflow-y-auto">
+                  {sorted.map(el => {
+                      const isSelected = selectedElementIds.has(el.id);
+                      return (
+                          <div
+                            key={el.id}
+                            className={`flex items-center space-x-2 px-2 py-1 rounded cursor-pointer ${isSelected ? 'bg-blue-50 border border-blue-200' : 'hover:bg-white border border-transparent'}`}
+                            onClick={() => setSelectedElementIds(new Set([el.id]))}
+                          >
+                              <button
+                                onClick={(e) => { e.stopPropagation(); toggleElementVisibility(el.id); }}
+                                className="p-1 rounded hover:bg-gray-200 text-gray-600"
+                                title={el.hidden ? 'Show layer' : 'Hide layer'}
+                              >
+                                  {el.hidden ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                              </button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); toggleElementLock(el.id); }}
+                                className="p-1 rounded hover:bg-gray-200 text-gray-600"
+                                title={el.locked ? 'Unlock layer' : 'Lock layer'}
+                              >
+                                  {el.locked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+                              </button>
+                              <input
+                                className="flex-1 h-7 px-2 border border-gray-200 rounded bg-white text-xs"
+                                value={el.name || getElementLabel(el)}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={(e) => renameElement(el.id, e.target.value)}
+                              />
+                              <button
+                                onClick={(e) => { e.stopPropagation(); duplicateSelection([el.id]); }}
+                                className="p-1 rounded hover:bg-gray-200 text-gray-600"
+                                title="Duplicate"
+                              >
+                                  <Copy className="w-4 h-4" />
+                              </button>
+                          </div>
+                      );
+                  })}
+                  {sorted.length === 0 && <div className="text-[11px] text-gray-400">No layers yet</div>}
+              </div>
+          </div>
+      );
+  };
+
   const renderInspectorPanel = () => {
       if (primaryElement) {
           const numericFontSize = primaryElement.style?.fontSize ? parseInt(primaryElement.style.fontSize, 10) : 24;
@@ -1696,6 +1851,7 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
           const opacityValue = primaryElement.style?.opacity ?? 1;
           return (
               <div className="space-y-4 text-xs text-gray-700">
+                  {renderLayerList()}
                   <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-2 font-semibold text-gray-800">
                           <SlidersHorizontal className="w-4 h-4 text-blue-500" />
@@ -1803,6 +1959,16 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
                             Reset
                           </button>
                       </div>
+                      <div className="flex items-center justify-between pt-1 text-[11px] text-gray-600">
+                          <label className="inline-flex items-center space-x-2">
+                              <input type="checkbox" checked={!!primaryElement.locked} onChange={() => toggleElementLock(primaryElement.id)} />
+                              <span>Lock movement</span>
+                          </label>
+                          <label className="inline-flex items-center space-x-2">
+                              <input type="checkbox" checked={!!primaryElement.hidden} onChange={() => toggleElementVisibility(primaryElement.id)} />
+                              <span>Hide layer</span>
+                          </label>
+                      </div>
                   </div>
 
                   {primaryElement.type === 'text' && (
@@ -1880,6 +2046,7 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
 
       return (
           <div className="space-y-4 text-xs text-gray-700">
+              {renderLayerList()}
               <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2 font-semibold text-gray-800">
                       <SunMedium className="w-4 h-4 text-blue-500" />
@@ -2125,6 +2292,14 @@ const ReportBuilder: React.FC<ReportBuilderProps> = ({ project, onUpdateProject 
                         <button disabled={selectionCount < 2} onClick={() => matchSize('both')} className={`px-2 py-1 rounded text-[11px] font-medium ${selectionCount < 2 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Match Width & Height">W/H</button>
 
                         <div className="w-px h-5 bg-gray-300 mx-1"></div>
+
+                        {/* Style Clipboard */}
+                        <button disabled={!primaryElement} onClick={copySelectedStyle} className={`p-1.5 rounded ${!primaryElement ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Copy style"><Copy className="w-4 h-4" /></button>
+                        <button disabled={!copiedStyle || selectionCount === 0} onClick={() => pasteCopiedStyle()} className={`p-1.5 rounded ${(!copiedStyle || selectionCount === 0) ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Paste style"><ClipboardPaste className="w-4 h-4" /></button>
+
+                        <div className="w-px h-5 bg-gray-300 mx-1"></div>
+
+                        <button disabled={selectionCount === 0} onClick={() => duplicateSelection()} className={`p-1.5 rounded ${selectionCount === 0 ? 'text-gray-300' : 'hover:bg-gray-200 text-gray-600'}`} title="Duplicate selection"><Layers className="w-4 h-4" /></button>
 
                         <button onClick={deleteSelection} className="p-1.5 hover:bg-red-50 text-red-500 rounded" title="Delete"><Trash2 className="w-4 h-4" /></button>
                     </>

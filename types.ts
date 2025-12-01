@@ -323,6 +323,7 @@ export interface ReportElementStyle {
 
 export interface ReportElement {
   id: string;
+  name?: string;
   type: ElementType;
   shapeType?: ShapeType; // Only if type === 'shape'
   widgetId?: string;     // Only if type === 'widget'
@@ -330,6 +331,9 @@ export interface ReportElement {
   tableData?: TableData; // Only if type === 'table'
   chartData?: ChartData; // Only if type === 'chart'
   style?: ReportElementStyle;
+
+  locked?: boolean;
+  hidden?: boolean;
 
   // Positioning
   x: number;
