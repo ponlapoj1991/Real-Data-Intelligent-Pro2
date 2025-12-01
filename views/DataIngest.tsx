@@ -255,13 +255,13 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, kind,
         </div>
 
         <div className="divide-y divide-gray-100">
-          <div className="grid grid-cols-12 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
-            <span className="col-span-1">No.</span>
-            <span className="col-span-3">Table name</span>
-            <span className="col-span-2">Rows</span>
-            <span className="col-span-3">Updated</span>
-            <span className="col-span-1">Status</span>
-            <span className="col-span-2 text-right">Action</span>
+          <div className="grid grid-cols-[60px,1.6fr,1fr,1.25fr,1fr,1.6fr] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <span>No.</span>
+            <span>Table name</span>
+            <span>Rows</span>
+            <span>Updated</span>
+            <span>Status</span>
+            <span className="text-right">Action</span>
           </div>
 
           {sources.length === 0 ? (
@@ -270,15 +270,15 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, kind,
             sources.map((source, idx) => {
               const isActive = normalizedProject.activeDataSourceId === source.id;
               return (
-                <div key={source.id} className="grid grid-cols-12 px-4 py-3 items-center text-sm hover:bg-gray-50">
-                  <span className="col-span-1 text-gray-500">{idx + 1}</span>
-                  <div className="col-span-3">
+                <div key={source.id} className="grid grid-cols-[60px,1.6fr,1fr,1.25fr,1fr,1.6fr] px-4 py-3 items-center text-sm hover:bg-gray-50 gap-2">
+                  <span className="text-gray-500">{idx + 1}</span>
+                  <div>
                     <div className="font-semibold text-gray-900">{source.name}</div>
                     <div className="text-xs text-gray-500">{kind === 'ingestion' ? 'Uploaded table' : 'Prepared output'}</div>
                   </div>
-                  <span className="col-span-2 text-gray-700">{source.rows.length.toLocaleString()}</span>
-                  <span className="col-span-3 text-gray-700">{new Date(source.updatedAt).toLocaleString()}</span>
-                  <div className="col-span-1">
+                  <span className="text-gray-700">{source.rows.length.toLocaleString()}</span>
+                  <span className="text-gray-700">{new Date(source.updatedAt).toLocaleString()}</span>
+                  <div>
                     {isActive ? (
                       <span className="inline-flex items-center px-2 py-1 text-xs rounded-full bg-green-50 text-green-700 border border-green-100">Active</span>
                     ) : (
@@ -290,7 +290,7 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, kind,
                       </button>
                     )}
                   </div>
-                  <div className="col-span-2 flex items-center justify-end space-x-2">
+                  <div className="flex items-center justify-end space-x-2">
                     <button
                       onClick={() => startUpload({ mode: 'append', sourceId: source.id })}
                       disabled={isLoading}
