@@ -7,7 +7,7 @@ import React, { useRef, useState, useCallback } from 'react';
 import { useSlideStore } from '../../store/useSlideStore';
 import { GridLines } from './GridLines';
 import { AlignmentGuides } from './AlignmentGuides';
-import type { PPTElement } from '../../types/slides';
+import { ElementRenderer } from '../Elements';
 
 interface ViewportProps {
   width: number;
@@ -129,47 +129,6 @@ export const Viewport: React.FC<ViewportProps> = ({ width, height }) => {
           width={width}
           height={height}
         />
-      </div>
-    </div>
-  );
-};
-
-// ============================================
-// Element Renderer (Placeholder)
-// ============================================
-
-interface ElementRendererProps {
-  element: PPTElement;
-  isSelected: boolean;
-  onClick: (e: React.MouseEvent) => void;
-}
-
-const ElementRenderer: React.FC<ElementRendererProps> = ({
-  element,
-  isSelected,
-  onClick,
-}) => {
-  const commonStyle: React.CSSProperties = {
-    position: 'absolute',
-    left: element.left,
-    top: element.top,
-    width: element.width,
-    height: element.height,
-    transform: `rotate(${element.rotate}deg)`,
-    cursor: 'move',
-    border: isSelected ? '2px solid #2F88FF' : '1px solid transparent',
-    boxShadow: isSelected ? '0 0 0 1px #2F88FF' : undefined,
-  };
-
-  // Placeholder rendering - will be replaced with actual element components
-  return (
-    <div
-      style={commonStyle}
-      onClick={onClick}
-      className="hover:ring-2 hover:ring-blue-300 transition-all"
-    >
-      <div className="w-full h-full bg-gray-100 border border-gray-300 flex items-center justify-center text-xs text-gray-500">
-        {element.type}
       </div>
     </div>
   );
