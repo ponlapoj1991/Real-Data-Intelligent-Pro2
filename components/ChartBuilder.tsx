@@ -18,7 +18,7 @@
  * 5. Double-click colors
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { X, Save, ChevronDown, ChevronUp, Palette, Type as TypeIcon, Sliders as SlidersIcon, Plus, Trash2, Edit as EditIcon, Search } from 'lucide-react';
 import {
   ChartType,
@@ -65,6 +65,34 @@ interface ChartBuilderProps {
 const generateId = () => 'w-' + Date.now().toString(36) + Math.random().toString(36).substring(2, 9);
 
 const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#6366F1'];
+
+const createDefaultLegend = (): LegendConfig => ({
+  enabled: true,
+  position: 'bottom',
+  fontSize: 11,
+  fontColor: '#666666',
+  alignment: 'center'
+});
+
+const createDefaultDataLabels = (): DataLabelConfig => ({
+  enabled: false,
+  position: 'top',
+  fontSize: 11,
+  fontWeight: 'normal',
+  color: '#000000'
+});
+
+const createDefaultAxis = (overrides: Partial<AxisConfig> = {}): AxisConfig => ({
+  title: '',
+  min: 'auto',
+  max: 'auto',
+  fontSize: 11,
+  fontColor: '#666666',
+  format: '#,##0',
+  showGridlines: true,
+  slant: 0,
+  ...overrides
+});
 
 // Collapsible Section
 const Section: React.FC<{
@@ -376,56 +404,62 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   // Style state
   const [chartTitle, setChartTitle] = useState('');
   const [subtitle, setSubtitle] = useState('');
-  const [legend, setLegend] = useState<LegendConfig>({
-    enabled: true,
-    position: 'bottom',
-    fontSize: 11,
-    fontColor: '#666666',
-    alignment: 'center'
-  });
-  const [dataLabels, setDataLabels] = useState<DataLabelConfig>({
-    enabled: false,
-    position: 'top',
-    fontSize: 11,
-    fontWeight: 'normal',
-    color: '#000000'
-  });
+  const [legend, setLegend] = useState<LegendConfig>(createDefaultLegend);
+  const [dataLabels, setDataLabels] = useState<DataLabelConfig>(createDefaultDataLabels);
 
   // Axes state
-  const [xAxis, setXAxis] = useState<AxisConfig>({
-    title: '',
-    fontSize: 11,
-    fontColor: '#666666',
-    slant: 0,
-    showGridlines: true
-  });
-  const [leftYAxis, setLeftYAxis] = useState<AxisConfig>({
-    title: '',
-    min: 'auto',
-    max: 'auto',
-    fontSize: 11,
-    fontColor: '#666666',
-    format: '#,##0',
-    showGridlines: true
-  });
-  const [rightYAxis, setRightYAxis] = useState<AxisConfig>({
-    title: '',
-    min: 'auto',
-    max: 'auto',
-    fontSize: 11,
-    fontColor: '#666666',
-    format: '#,##0',
-    showGridlines: true
-  });
+  const [xAxis, setXAxis] = useState<AxisConfig>(() => createDefaultAxis({ min: undefined, max: undefined, format: undefined }));
+  const [leftYAxis, setLeftYAxis] = useState<AxisConfig>(createDefaultAxis);
+  const [rightYAxis, setRightYAxis] = useState<AxisConfig>(createDefaultAxis);
 
   // UI state
   const [openSections, setOpenSections] = useState<Set<string>>(new Set());
   const [seriesModal, setSeriesModal] = useState<{ isOpen: boolean; series: SeriesConfig | null }>({ isOpen: false, series: null });
   const [categoryModal, setCategoryModal] = useState<{ isOpen: boolean; category: string } | null>(null);
 
+  const resetBuilderState = useCallback(() => {
+    setShowTypeSelector(true);
+    setActiveTab('setup');
+    setTitle('New Chart');
+    setType(null);
+    setDimension(availableColumns[0] || '');
+    setWidth('half');
+    setStackBy('');
+    setXDimension('');
+    setYDimension('');
+    setSizeDimension('');
+    setColorBy('');
+    setInnerRadius(0);
+    setStartAngle(0);
+    setCurveType('linear');
+    setStrokeWidth(2);
+    setSortBy('value-desc');
+    setCategoryFilter([]);
+    setCategorySearch('');
+    setBarOrientation('vertical');
+    setSeries([]);
+    setMeasure('count');
+    setMeasureCol('');
+    setCategoryConfig({});
+    setChartTitle('');
+    setSubtitle('');
+    setLegend(createDefaultLegend());
+    setDataLabels(createDefaultDataLabels());
+    setXAxis(createDefaultAxis({ min: undefined, max: undefined, format: undefined }));
+    setLeftYAxis(createDefaultAxis());
+    setRightYAxis(createDefaultAxis());
+    setOpenSections(new Set());
+    setSeriesModal({ isOpen: false, series: null });
+    setCategoryModal(null);
+  }, [availableColumns]);
+
   // Initialize
   useEffect(() => {
+    if (!isOpen) return;
+
     if (initialWidget) {
+      setShowTypeSelector(false);
+      setActiveTab('setup');
       setTitle(initialWidget.title);
       setType(initialWidget.type);
       setDimension(initialWidget.dimension);
@@ -444,17 +478,15 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       }
 
       setCategoryConfig(initialWidget.categoryConfig || {});
-      if (initialWidget.legend) setLegend(initialWidget.legend);
-      if (initialWidget.dataLabels) setDataLabels(initialWidget.dataLabels);
-      setXAxis(initialWidget.xAxis || xAxis);
-      setLeftYAxis(initialWidget.leftYAxis || leftYAxis);
-      setRightYAxis(initialWidget.rightYAxis || rightYAxis);
+      setLegend(initialWidget.legend || createDefaultLegend());
+      setDataLabels(initialWidget.dataLabels || createDefaultDataLabels());
+      setXAxis(initialWidget.xAxis || createDefaultAxis({ min: undefined, max: undefined, format: undefined }));
+      setLeftYAxis(initialWidget.leftYAxis || createDefaultAxis());
+      setRightYAxis(initialWidget.rightYAxis || createDefaultAxis());
     } else {
-      if (availableColumns.length > 0) {
-        setDimension(availableColumns[0]);
-      }
+      resetBuilderState();
     }
-  }, [initialWidget, availableColumns]);
+  }, [isOpen, initialWidget, availableColumns, resetBuilderState]);
 
   // Sorting function (must be declared before useMemo that uses it)
   const applySorting = (data: any[], order: SortOrder, valueKey: string) => {
@@ -811,6 +843,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   const handleChartTypeSelect = (selectedType: ChartType) => {
     setType(selectedType);
     setShowTypeSelector(false);
+    setActiveTab('setup');
 
     // Set default orientation based on chart type
     const defaultOrientation = getDefaultOrientation(selectedType);
@@ -820,6 +853,15 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
     if (selectedType === 'donut') {
       setInnerRadius(50);
     }
+  };
+
+  const handleCloseTypeSelector = () => {
+    if (!type) {
+      onClose();
+      return;
+    }
+
+    setShowTypeSelector(false);
   };
 
   const showAxes = type && type !== 'pie' && type !== 'donut' && type !== 'kpi' && type !== 'wordcloud' && type !== 'table';
@@ -838,7 +880,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       <ChartTypeSelector
         isOpen={true}
         onSelect={handleChartTypeSelect}
-        onClose={onClose}
+        onClose={handleCloseTypeSelector}
       />
     );
   }
