@@ -9,6 +9,7 @@ import { useKeyboardShortcuts } from '../../hooks/useKeyboard';
 import { Toolbar } from './Toolbar';
 import { Thumbnails } from './Thumbnails';
 import { Canvas } from '../Canvas';
+import { Inspector } from '../Inspector/Inspector';
 
 export const Editor: React.FC = () => {
   const { presentation, createPresentation } = useSlideStore();
@@ -36,8 +37,8 @@ export const Editor: React.FC = () => {
         {/* Center: Canvas */}
         <Canvas />
 
-        {/* Right: Properties Panel (Future) */}
-        {/* <PropertiesPanel /> */}
+        {/* Right: Inspector Panel */}
+        <Inspector />
       </div>
     </div>
   );
