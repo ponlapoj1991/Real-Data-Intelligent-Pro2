@@ -1,6 +1,6 @@
 
-import React, { useState } from 'react';
-import { LayoutDashboard, Database, FileSpreadsheet, ArrowLeft, BarChart3, ChevronRight, FileOutput, Bot, Settings, PanelLeftClose, PanelLeftOpen, FolderOpen } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Database, FileSpreadsheet, ArrowLeft, BarChart3, ChevronRight, FileOutput, Bot, Settings, PanelLeftClose, PanelLeftOpen, FolderOpen } from 'lucide-react';
 import { ProjectTab } from '../types';
 
 interface SidebarProps {
@@ -13,13 +13,24 @@ interface SidebarProps {
 const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, onBackToLanding, projectName }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
-  const menuItems = [
-    { id: ProjectTab.UPLOAD, label: 'Management Data', icon: Database },
-    { id: ProjectTab.PREP, label: 'Clean & Prep', icon: FileSpreadsheet },
-    { id: ProjectTab.VISUALIZE, label: 'Analytics', icon: BarChart3 },
-    { id: ProjectTab.AI_AGENT, label: 'AI Agent', icon: Bot },
-    { id: ProjectTab.REPORT, label: 'Report Builder', icon: FileOutput },
-  ];
+  const menuItems = useMemo(
+    () => [
+      {
+        id: ProjectTab.UPLOAD,
+        label: 'Management Data',
+        icon: Database,
+        children: [
+          { id: ProjectTab.INGESTION, label: 'Ingestion Data' },
+          { id: ProjectTab.PREPARATION, label: 'Preparation Data' },
+        ],
+      },
+      { id: ProjectTab.PREP, label: 'Clean & Prep', icon: FileSpreadsheet },
+      { id: ProjectTab.VISUALIZE, label: 'Analytics', icon: BarChart3 },
+      { id: ProjectTab.AI_AGENT, label: 'AI Agent', icon: Bot },
+      { id: ProjectTab.REPORT, label: 'Report Builder', icon: FileOutput },
+    ],
+    []
+  );
 
   return (
     <div 
@@ -63,29 +74,48 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, onBackToLandi
       <div className="flex-1 py-4 px-3 space-y-1 overflow-y-auto overflow-x-hidden custom-scrollbar">
         {menuItems.map((item) => {
           const Icon = item.icon;
-          const isActive = activeTab === item.id;
+          const isSectionActive = activeTab === item.id || item.children?.some((child) => child.id === activeTab);
+          const hasChildren = !!item.children?.length;
           return (
-            <button
-              key={item.id}
-              onClick={() => onTabChange(item.id)}
-              title={isCollapsed ? item.label : undefined}
-              className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'justify-between px-3'} py-2.5 rounded-lg transition-all text-sm font-medium group relative ${
-                isActive
-                  ? 'bg-blue-50 text-blue-700'
-                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-              }`}
-            >
-              <div className={`flex items-center ${isCollapsed ? '' : 'space-x-3'}`}>
-                <Icon className={`w-5 h-5 ${isActive ? 'text-blue-600' : 'text-gray-400 group-hover:text-gray-500'}`} />
-                {!isCollapsed && <span className="whitespace-nowrap">{item.label}</span>}
-              </div>
-              {!isCollapsed && isActive && <ChevronRight className="w-3 h-3 text-blue-500" />}
-              
-              {/* Active Indicator for Collapsed Mode */}
-              {isCollapsed && isActive && (
+            <div key={item.id} className="space-y-1">
+              <button
+                onClick={() => onTabChange(item.id)}
+                title={isCollapsed ? item.label : undefined}
+                className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'justify-between px-3'} py-2.5 rounded-lg transition-all text-sm font-medium group relative ${
+                  isSectionActive ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                }`}
+              >
+                <div className={`flex items-center ${isCollapsed ? '' : 'space-x-3'}`}>
+                  <Icon className={`w-5 h-5 ${isSectionActive ? 'text-blue-600' : 'text-gray-400 group-hover:text-gray-500'}`} />
+                  {!isCollapsed && <span className="whitespace-nowrap">{item.label}</span>}
+                </div>
+                {!isCollapsed && isSectionActive && <ChevronRight className="w-3 h-3 text-blue-500" />}
+
+                {isCollapsed && isSectionActive && (
                   <div className="absolute left-0 top-1/2 transform -translate-y-1/2 w-1 h-8 bg-blue-600 rounded-r-full"></div>
+                )}
+              </button>
+
+              {!isCollapsed && hasChildren && isSectionActive && (
+                <div className="pl-10 space-y-1">
+                  {item.children?.map((child) => {
+                    const childActive = activeTab === child.id;
+                    return (
+                      <button
+                        key={child.id}
+                        onClick={() => onTabChange(child.id)}
+                        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${
+                          childActive ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                        }`}
+                      >
+                        <span className="whitespace-nowrap">{child.label}</span>
+                        {childActive && <ChevronRight className="w-3 h-3 text-blue-500" />}
+                      </button>
+                    );
+                  })}
+                </div>
               )}
-            </button>
+            </div>
           );
         })}
       </div>

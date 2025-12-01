@@ -8,6 +8,7 @@ import Analytics from './views/Analytics';
 import ReportBuilder from './views/ReportBuilder';
 import AiAgent from './views/AiAgent';
 import Settings from './views/Settings';
+import ManagementLanding from './views/ManagementLanding';
 import { Project, AppView, ProjectTab } from './types';
 import { saveLastState } from './utils/storage-compat';
 import { ToastProvider } from './components/ToastProvider';
@@ -25,7 +26,7 @@ const App: React.FC = () => {
   const handleSelectProject = (project: Project) => {
     setCurrentProject(project);
     setCurrentView(AppView.PROJECT);
-    setActiveTab(ProjectTab.UPLOAD); // Default start at upload
+    setActiveTab(ProjectTab.UPLOAD); // Default start at management landing
     saveLastState(project.id, ProjectTab.UPLOAD);
   };
 
@@ -67,6 +68,8 @@ const App: React.FC = () => {
               <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-8 shadow-sm flex-shrink-0 z-10">
                   <span className="text-sm text-gray-500 font-medium">
                       {activeTab === ProjectTab.UPLOAD && 'Management Data'}
+                      {activeTab === ProjectTab.INGESTION && 'Ingestion Data'}
+                      {activeTab === ProjectTab.PREPARATION && 'Preparation Data'}
                       {activeTab === ProjectTab.PREP && 'Clean & Prep'}
                       {activeTab === ProjectTab.VISUALIZE && 'Analytics'}
                       {activeTab === ProjectTab.AI_AGENT && 'AI Enrichment'}
@@ -80,14 +83,21 @@ const App: React.FC = () => {
               </header>
 
               <main className="flex-1 overflow-hidden relative">
-                  {activeTab === ProjectTab.UPLOAD && (
-                      <div className="h-full overflow-y-auto">
-                          <DataIngest 
-                              project={currentProject} 
-                              onUpdateProject={updateProject} 
-                              onNext={() => handleTabChange(ProjectTab.PREP)}
-                          />
-                      </div>
+                  {activeTab === ProjectTab.UPLOAD && <ManagementLanding />}
+                  {activeTab === ProjectTab.INGESTION && (
+                    <div className="h-full overflow-y-auto">
+                      <DataIngest
+                        project={currentProject}
+                        onUpdateProject={updateProject}
+                        kind="ingestion"
+                        onNext={() => handleTabChange(ProjectTab.PREP)}
+                      />
+                    </div>
+                  )}
+                  {activeTab === ProjectTab.PREPARATION && (
+                    <div className="h-full overflow-y-auto">
+                      <DataIngest project={currentProject} onUpdateProject={updateProject} kind="prepared" />
+                    </div>
                   )}
                   {activeTab === ProjectTab.PREP && (
                       <DataPrep 

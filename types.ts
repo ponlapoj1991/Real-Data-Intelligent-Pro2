@@ -7,6 +7,8 @@ export enum AppView {
 
 export enum ProjectTab {
   UPLOAD = 'UPLOAD',
+  INGESTION = 'INGESTION',
+  PREPARATION = 'PREPARATION',
   PREP = 'PREP',
   VISUALIZE = 'VISUALIZE',
   REPORT = 'REPORT',
