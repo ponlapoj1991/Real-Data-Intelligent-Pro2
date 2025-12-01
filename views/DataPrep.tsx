@@ -2,9 +2,11 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { Settings, Download, Save, Search, X, Eraser, Trash2, Replace, ArrowRight, Zap, Calendar, Split, Table2, Database, Plus, GripVertical, Check, ListFilter, ChevronUp, ChevronDown, Pencil } from 'lucide-react';
 import { Project, RawRow, ColumnConfig, TransformationRule, TransformMethod } from '../types';
 import { saveProject } from '../utils/storage-compat';
-import { exportToExcel, smartParseDate } from '../utils/excel';
+import { addDerivedDataSource, ensureDataSources, setActiveDataSource, updateDataSourceRows } from '../utils/dataSources';
+import { exportToExcel, smartParseDate, inferColumns } from '../utils/excel';
 import { analyzeSourceColumn, applyTransformation, getAllUniqueValues } from '../utils/transform';
 import EmptyState from '../components/EmptyState';
+import { useToast } from '../components/ToastProvider';
 
 interface DataPrepProps {
   project: Project;
@@ -14,8 +16,18 @@ interface DataPrepProps {
 type Mode = 'clean' | 'build';
 
 const DataPrep: React.FC<DataPrepProps> = ({ project, onUpdateProject }) => {
+  const needsNormalization = !project.dataSources?.length || !project.activeDataSourceId;
+  const { project: normalizedProject, active: activeSource } = useMemo(() => ensureDataSources(project), [project]);
+  useEffect(() => {
+    if (needsNormalization) {
+      onUpdateProject(normalizedProject);
+    }
+  }, [needsNormalization, normalizedProject, onUpdateProject]);
+
   const [mode, setMode] = useState<Mode>('clean');
   const [isSaving, setIsSaving] = useState(false);
+
+  const { showToast } = useToast();
 
   // --- CLEAN MODE STATES ---
   const [editingCol, setEditingCol] = useState<string | null>(null);
@@ -29,7 +41,7 @@ const DataPrep: React.FC<DataPrepProps> = ({ project, onUpdateProject }) => {
   const [delimiter, setDelimiter] = useState<string>(',');
 
   // --- BUILD MODE STATES ---
-  const [rules, setRules] = useState<TransformationRule[]>(project.transformRules || []);
+  const [rules, setRules] = useState<TransformationRule[]>(normalizedProject.transformRules || []);
   const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   
@@ -40,6 +52,9 @@ const DataPrep: React.FC<DataPrepProps> = ({ project, onUpdateProject }) => {
   const [selectedMethod, setSelectedMethod] = useState<TransformMethod>('copy');
   const [methodParams, setMethodParams] = useState<any>({});
   const [valueMap, setValueMap] = useState<Record<string, string>>({});
+
+  const activeData = activeSource.rows;
+  const activeColumns = activeSource.columns;
   
   // Manual Map State
   const [manualMapKey, setManualMapKey] = useState('');
@@ -48,17 +63,17 @@ const DataPrep: React.FC<DataPrepProps> = ({ project, onUpdateProject }) => {
   // Computed Structured Data
   const structuredData = useMemo(() => {
       if (mode === 'build' && rules.length > 0) {
-          return applyTransformation(project.data, rules);
+          return applyTransformation(activeData, rules);
       }
       return [];
-  }, [project.data, rules, mode]);
+  }, [activeData, rules, mode]);
 
   // Sync Rules to Project
   useEffect(() => {
-      if (JSON.stringify(project.transformRules) !== JSON.stringify(rules)) {
+      if (JSON.stringify(normalizedProject.transformRules) !== JSON.stringify(rules)) {
          // Keep local state in sync
       }
-  }, [rules, project.transformRules]);
+  }, [rules, normalizedProject.transformRules]);
 
   // --- SHARED FUNCTIONS ---
   const safeRender = (val: any) => {
@@ -68,9 +83,21 @@ const DataPrep: React.FC<DataPrepProps> = ({ project, onUpdateProject }) => {
     return String(val);
   };
 
+  const persistActiveData = async (rows: RawRow[], columns: ColumnConfig[] = activeColumns) => {
+    const updatedProject = updateDataSourceRows(normalizedProject, activeSource.id, rows, columns, 'replace');
+    onUpdateProject(updatedProject);
+    await saveProject(updatedProject);
+  };
+
+  const handleActiveChange = async (value: string) => {
+    const updated = setActiveDataSource(normalizedProject, value);
+    onUpdateProject(updated);
+    await saveProject(updated);
+  };
+
   const handleManualSave = async () => {
       setIsSaving(true);
-      const updatedProject = { ...project, transformRules: rules };
+      const updatedProject = { ...normalizedProject, transformRules: rules };
       onUpdateProject(updatedProject);
       await saveProject(updatedProject);
       setTimeout(() => setIsSaving(false), 800);
@@ -78,26 +105,38 @@ const DataPrep: React.FC<DataPrepProps> = ({ project, onUpdateProject }) => {
 
   const handleExport = () => {
       if (mode === 'clean') {
-        exportToExcel(project.data, `${project.name}_Raw_Cleaned`);
+        exportToExcel(activeData, `${project.name}_Raw_Cleaned`);
       } else {
         exportToExcel(structuredData, `${project.name}_Structured`);
       }
   };
 
+  const handleSavePreparedTable = async () => {
+      if (structuredData.length === 0) {
+        showToast('No structured data yet', 'Switch to Build Structure and add a rule before saving.', 'warning');
+        return;
+      }
+      const name = prompt('Name for this prepared table', `${project.name} - Prepared`);
+      if (!name) return;
+      const columns = inferColumns(structuredData[0]);
+      const updatedProject = addDerivedDataSource(normalizedProject, name, structuredData, columns, 'prepared');
+      onUpdateProject(updatedProject);
+      await saveProject(updatedProject);
+      showToast('Prepared table saved', 'Find it under Management Data > Preparation Data.', 'success');
+  };
+
   // --- CLEAN MODE FUNCTIONS ---
   const updateColumnType = async (key: string, type: ColumnConfig['type']) => {
-    const newCols = project.columns.map(c => c.key === key ? { ...c, type } : c);
-    const updatedProject = { ...project, columns: newCols };
-    onUpdateProject(updatedProject);
+    const newCols = activeColumns.map(c => c.key === key ? { ...c, type } : c);
+    await persistActiveData(activeData, newCols);
     setEditingCol(null);
-    await saveProject(updatedProject);
   };
 
   const handleFindReplace = async () => {
     if (!findText) return;
-    const newData = project.data.map(row => {
+    const newData = activeData.map(row => {
         const newRow = { ...row };
-        const colsToSearch = targetCol === 'all' ? project.columns.map(c => c.key) : [targetCol];
+        const colsToSearch = targetCol === 'all' ? activeColumns.map(c => c.key) : [targetCol];
         colsToSearch.forEach(key => {
             const val = newRow[key];
             if (typeof val === 'string' && val.includes(findText)) {
@@ -106,15 +145,13 @@ const DataPrep: React.FC<DataPrepProps> = ({ project, onUpdateProject }) => {
         });
         return newRow;
     });
-    const updatedProject = { ...project, data: newData };
-    onUpdateProject(updatedProject);
-    await saveProject(updatedProject);
+    await persistActiveData(newData, activeColumns);
   };
 
   const handleTransform = async () => {
     if (!transformCol) return;
-    let newData = [...project.data];
-    let newCols = [...project.columns];
+    let newData = [...activeData];
+    let newCols = [...activeColumns];
 
     if (transformAction === 'date') {
         newData = newData.map(row => {
@@ -137,23 +174,19 @@ const DataPrep: React.FC<DataPrepProps> = ({ project, onUpdateProject }) => {
         });
         newCols = newCols.map(c => c.key === transformCol ? { ...c, type: 'tag_array' } : c);
     }
-    const updatedProject = { ...project, data: newData, columns: newCols };
-    onUpdateProject(updatedProject);
-    await saveProject(updatedProject);
+    await persistActiveData(newData, newCols);
     setTransformCol('');
   };
 
   const handleDeleteRow = async (index: number) => {
-    const newData = project.data.filter((_, i) => i !== index);
-    const updatedProject = { ...project, data: newData };
-    onUpdateProject(updatedProject);
-    await saveProject(updatedProject);
+    const newData = activeData.filter((_, i) => i !== index);
+    await persistActiveData(newData, activeColumns);
   };
 
   // --- BUILD MODE FUNCTIONS ---
   const handleSourceColSelect = (colKey: string) => {
       setSelectedSourceCol(colKey);
-      const analysis = analyzeSourceColumn(project.data, colKey);
+      const analysis = analyzeSourceColumn(activeData, colKey);
       setSourceAnalysis(analysis);
       
       // Smart Default logic, only if we are NOT editing an existing rule
@@ -194,7 +227,7 @@ const DataPrep: React.FC<DataPrepProps> = ({ project, onUpdateProject }) => {
       setValueMap(rule.valueMap || {});
       
       // Run analysis to populate preview/options
-      const analysis = analyzeSourceColumn(project.data, rule.sourceKey);
+      const analysis = analyzeSourceColumn(activeData, rule.sourceKey);
       setSourceAnalysis(analysis);
 
       setIsRuleModalOpen(true);
@@ -255,15 +288,15 @@ const DataPrep: React.FC<DataPrepProps> = ({ project, onUpdateProject }) => {
   const uniqueValuesForMapping = useMemo(() => {
       if (!selectedSourceCol) return [];
       // Use the comprehensive scan function here, scanning up to 5000 rows
-      return getAllUniqueValues(project.data, selectedSourceCol, selectedMethod, 5000);
-  }, [selectedSourceCol, selectedMethod, project.data]);
+      return getAllUniqueValues(activeData, selectedSourceCol, selectedMethod, 5000);
+  }, [selectedSourceCol, selectedMethod, activeData]);
 
   // Clean Mode Filter Logic
   const filteredRawData = useMemo(() => {
-    if (!searchQuery.trim()) return project.data;
+    if (!searchQuery.trim()) return activeData;
     const lowerQuery = searchQuery.toLowerCase();
-    return project.data.filter(row => Object.values(row).some(val => String(val).toLowerCase().includes(lowerQuery)));
-  }, [project.data, searchQuery]);
+    return activeData.filter(row => Object.values(row).some(val => String(val).toLowerCase().includes(lowerQuery)));
+  }, [activeData, searchQuery]);
 
   const displayRawData = useMemo(() => filteredRawData.slice(0, 50), [filteredRawData]);
 
@@ -278,8 +311,23 @@ const DataPrep: React.FC<DataPrepProps> = ({ project, onUpdateProject }) => {
                 <p className="text-gray-500 text-sm">Clean raw data or build your structured report.</p>
             </div>
             <div className="h-10 w-px bg-gray-200"></div>
+            <div className="flex items-center space-x-2 bg-gray-100 rounded-lg px-3 py-2">
+                <span className="text-xs font-semibold text-gray-600 uppercase">Active table</span>
+                <select
+                  value={activeSource.id}
+                  onChange={(e) => handleActiveChange(e.target.value)}
+                  className="text-sm border border-gray-200 bg-white rounded-md px-2 py-1 focus:ring-2 focus:ring-blue-500 outline-none"
+                >
+                  {(normalizedProject.dataSources || []).map((src) => (
+                    <option key={src.id} value={src.id}>
+                      {src.name}
+                    </option>
+                  ))}
+                </select>
+            </div>
+            <div className="h-10 w-px bg-gray-200"></div>
             <div className="flex bg-gray-100 p-1 rounded-lg">
-                <button 
+                <button
                     onClick={() => setMode('clean')}
                     className={`flex items-center px-4 py-2 rounded-md text-sm font-medium transition-all ${mode === 'clean' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
                 >
@@ -301,7 +349,15 @@ const DataPrep: React.FC<DataPrepProps> = ({ project, onUpdateProject }) => {
                 <Download className="w-4 h-4" />
                 <span>Export {mode === 'build' ? 'Structure' : 'Raw'}</span>
             </button>
-             <button 
+            <button
+                onClick={handleSavePreparedTable}
+                disabled={mode !== 'build'}
+                className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors shadow-sm border ${mode === 'build' ? 'bg-emerald-600 text-white hover:bg-emerald-700 border-emerald-600' : 'bg-white text-gray-400 border-gray-200 cursor-not-allowed'}`}
+            >
+                <Save className="w-4 h-4" />
+                <span>Save as prepared table</span>
+            </button>
+             <button
                 onClick={handleManualSave}
                 disabled={isSaving}
                 className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors shadow-sm disabled:opacity-50">
@@ -350,7 +406,7 @@ const DataPrep: React.FC<DataPrepProps> = ({ project, onUpdateProject }) => {
                     <input className="px-2 py-1 text-sm border rounded w-40" placeholder="Replace" value={replaceText} onChange={e => setReplaceText(e.target.value)} />
                     <select className="px-2 py-1 text-sm border rounded" value={targetCol} onChange={e => setTargetCol(e.target.value)}>
                         <option value="all">All Columns</option>
-                        {project.columns.map(c => <option key={c.key} value={c.key}>{c.key}</option>)}
+                        {activeColumns.map(c => <option key={c.key} value={c.key}>{c.key}</option>)}
                     </select>
                     <button onClick={handleFindReplace} className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">Execute</button>
                 </div>
@@ -365,7 +421,7 @@ const DataPrep: React.FC<DataPrepProps> = ({ project, onUpdateProject }) => {
                     </div>
                     <select className="px-2 py-1 text-sm border rounded w-40" value={transformCol} onChange={e => setTransformCol(e.target.value)}>
                         <option value="">Select Column</option>
-                        {project.columns.map(c => <option key={c.key} value={c.key}>{c.key}</option>)}
+                        {activeColumns.map(c => <option key={c.key} value={c.key}>{c.key}</option>)}
                     </select>
                     {transformAction === 'explode' && (
                         <input className="px-2 py-1 text-sm border rounded w-20" placeholder="Delimiter" value={delimiter} onChange={e => setDelimiter(e.target.value)} />
@@ -380,7 +436,7 @@ const DataPrep: React.FC<DataPrepProps> = ({ project, onUpdateProject }) => {
                     <thead className="text-xs text-gray-700 uppercase bg-gray-50 sticky top-0 z-10">
                         <tr>
                             <th className="px-4 py-3 w-10 border-b border-gray-200">#</th>
-                            {project.columns.map(col => (
+                            {activeColumns.map(col => (
                                 <th key={col.key} className="px-6 py-3 border-b border-gray-200 font-bold whitespace-nowrap min-w-[150px]">
                                     <div className="flex items-center justify-between">
                                         <span>{col.key}</span>
@@ -409,7 +465,7 @@ const DataPrep: React.FC<DataPrepProps> = ({ project, onUpdateProject }) => {
                         {displayRawData.map((row, idx) => (
                             <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50">
                                 <td className="px-4 py-3 text-xs font-mono text-gray-400">{idx + 1}</td>
-                                {project.columns.map(col => (
+                                {activeColumns.map(col => (
                                     <td key={col.key} className="px-6 py-3 truncate max-w-xs" title={String(row[col.key])}>
                                         {safeRender(row[col.key])}
                                     </td>
@@ -578,7 +634,7 @@ const DataPrep: React.FC<DataPrepProps> = ({ project, onUpdateProject }) => {
                                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
                                     >
                                         <option value="">-- Select Source --</option>
-                                        {project.columns.map(c => <option key={c.key} value={c.key}>{c.key}</option>)}
+                                        {activeColumns.map(c => <option key={c.key} value={c.key}>{c.key}</option>)}
                                     </select>
                                 </div>
 

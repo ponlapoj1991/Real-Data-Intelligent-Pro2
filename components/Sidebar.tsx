@@ -14,7 +14,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, onBackToLandi
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   const menuItems = [
-    { id: ProjectTab.UPLOAD, label: 'Connect Data', icon: Database },
+    { id: ProjectTab.UPLOAD, label: 'Management Data', icon: Database },
     { id: ProjectTab.PREP, label: 'Clean & Prep', icon: FileSpreadsheet },
     { id: ProjectTab.VISUALIZE, label: 'Analytics', icon: BarChart3 },
     { id: ProjectTab.AI_AGENT, label: 'AI Agent', icon: Bot },

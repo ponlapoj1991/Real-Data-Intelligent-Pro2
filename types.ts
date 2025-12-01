@@ -60,6 +60,18 @@ export interface ColumnConfig {
   label?: string;
 }
 
+export type DataSourceKind = 'ingestion' | 'prepared';
+
+export interface DataSource {
+  id: string;
+  name: string;
+  kind: DataSourceKind;
+  rows: RawRow[];
+  columns: ColumnConfig[];
+  createdAt: number;
+  updatedAt: number;
+}
+
 // --- New Transformation Types ---
 
 export type TransformMethod = 
@@ -307,12 +319,15 @@ export interface ReportElementStyle {
   textDecoration?: string;
   textAlign?: 'left' | 'center' | 'right' | 'justify';
   color?: string; // Text color
-  
+  lineHeight?: string;
+  letterSpacing?: string;
+
   // Appearance
   backgroundColor?: string;
   fill?: string; // Shape fill
   stroke?: string; // Border color
   strokeWidth?: number;
+  borderRadius?: number;
   opacity?: number;
   rotation?: number;
   shadow?: boolean;
@@ -320,6 +335,7 @@ export interface ReportElementStyle {
 
 export interface ReportElement {
   id: string;
+  name?: string;
   type: ElementType;
   shapeType?: ShapeType; // Only if type === 'shape'
   widgetId?: string;     // Only if type === 'widget'
@@ -327,6 +343,9 @@ export interface ReportElement {
   tableData?: TableData; // Only if type === 'table'
   chartData?: ChartData; // Only if type === 'chart'
   style?: ReportElementStyle;
+
+  locked?: boolean;
+  hidden?: boolean;
 
   // Positioning
   x: number;
@@ -347,8 +366,11 @@ export interface Project {
   name: string;
   description: string;
   lastModified: number;
-  data: RawRow[];          // Original Raw Data
-  columns: ColumnConfig[]; // Config for Raw Data
+  data: RawRow[];          // Legacy active data snapshot
+  columns: ColumnConfig[]; // Legacy active schema
+
+  dataSources?: DataSource[]; // Multi-table support
+  activeDataSourceId?: string; // Which table powers features
   
   transformRules?: TransformationRule[];
   dashboard?: DashboardWidget[]; // Saved Dashboard Config

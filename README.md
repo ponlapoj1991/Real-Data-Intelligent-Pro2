@@ -15,6 +15,10 @@ A powerful Social Listening Data Intelligence Platform built with React, TypeScr
 - 📄 **Report Builder**: Drag-and-drop presentation builder with PPTX export
 - ⚙️ **Multi-AI Support**: Works with Google Gemini, OpenAI, and Claude
 
+## Branch alignment
+
+- Active working branch: `verify-chart-creation-logic-in-analytics` (tracks the Analytics chart verification updates).
+
 ---
 
 ## 🚀 Quick Start

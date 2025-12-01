@@ -18,7 +18,7 @@
  * 5. Double-click colors
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { X, Save, ChevronDown, ChevronUp, Palette, Type as TypeIcon, Sliders as SlidersIcon, Plus, Trash2, Edit as EditIcon, Search } from 'lucide-react';
 import {
   ChartType,
@@ -65,6 +65,39 @@ interface ChartBuilderProps {
 const generateId = () => 'w-' + Date.now().toString(36) + Math.random().toString(36).substring(2, 9);
 
 const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#6366F1'];
+const COLOR_SWATCHES = [
+  '#1D4ED8', '#3B82F6', '#06B6D4', '#0EA5E9', '#22C55E', '#16A34A', '#F59E0B', '#F97316',
+  '#EF4444', '#DC2626', '#8B5CF6', '#A855F7', '#EC4899', '#DB2777', '#14B8A6', '#0F766E',
+  '#111827', '#4B5563', '#9CA3AF', '#D1D5DB'
+];
+
+const createDefaultLegend = (): LegendConfig => ({
+  enabled: true,
+  position: 'bottom',
+  fontSize: 11,
+  fontColor: '#666666',
+  alignment: 'center'
+});
+
+const createDefaultDataLabels = (): DataLabelConfig => ({
+  enabled: false,
+  position: 'top',
+  fontSize: 11,
+  fontWeight: 'normal',
+  color: '#000000'
+});
+
+const createDefaultAxis = (overrides: Partial<AxisConfig> = {}): AxisConfig => ({
+  title: '',
+  min: 'auto',
+  max: 'auto',
+  fontSize: 11,
+  fontColor: '#666666',
+  format: '#,##0',
+  showGridlines: true,
+  slant: 0,
+  ...overrides
+});
 
 // Collapsible Section
 const Section: React.FC<{
@@ -111,6 +144,17 @@ const CategoryConfigModal: React.FC<{
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Color</label>
+            <div className="grid grid-cols-10 gap-2 mb-3">
+              {COLOR_SWATCHES.map((swatch) => (
+                <button
+                  key={swatch}
+                  type="button"
+                  onClick={() => setColor(swatch)}
+                  className={`h-7 w-7 rounded border ${color === swatch ? 'ring-2 ring-blue-500 border-blue-200' : 'border-gray-200'}`}
+                  style={{ backgroundColor: swatch }}
+                />
+              ))}
+            </div>
             <div className="flex items-center gap-2">
               <input
                 type="color"
@@ -206,11 +250,11 @@ const SeriesConfigModal: React.FC<{
           {series ? 'Edit Series' : 'Add Series'}
         </h3>
 
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Series Name</label>
-            <input
-              type="text"
+      <div className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Series Name</label>
+          <input
+            type="text"
               value={label}
               onChange={(e) => setLabel(e.target.value)}
               placeholder="e.g., Post Count, Engagement Rate"
@@ -280,13 +324,24 @@ const SeriesConfigModal: React.FC<{
             </div>
           )}
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Color</label>
-            <div className="flex items-center gap-2">
-              <input
-                type="color"
-                value={color}
-                onChange={(e) => setColor(e.target.value)}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Color</label>
+          <div className="grid grid-cols-10 gap-2 mb-3">
+            {COLOR_SWATCHES.map((swatch) => (
+              <button
+                key={swatch}
+                type="button"
+                onClick={() => setColor(swatch)}
+                className={`h-7 w-7 rounded border ${color === swatch ? 'ring-2 ring-blue-500 border-blue-200' : 'border-gray-200'}`}
+                style={{ backgroundColor: swatch }}
+              />
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="color"
+              value={color}
+              onChange={(e) => setColor(e.target.value)}
                 className="w-16 h-10 border border-gray-300 rounded cursor-pointer"
                 style={{ outline: 'none' }}
               />
@@ -376,56 +431,62 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   // Style state
   const [chartTitle, setChartTitle] = useState('');
   const [subtitle, setSubtitle] = useState('');
-  const [legend, setLegend] = useState<LegendConfig>({
-    enabled: true,
-    position: 'bottom',
-    fontSize: 11,
-    fontColor: '#666666',
-    alignment: 'center'
-  });
-  const [dataLabels, setDataLabels] = useState<DataLabelConfig>({
-    enabled: false,
-    position: 'top',
-    fontSize: 11,
-    fontWeight: 'normal',
-    color: '#000000'
-  });
+  const [legend, setLegend] = useState<LegendConfig>(createDefaultLegend);
+  const [dataLabels, setDataLabels] = useState<DataLabelConfig>(createDefaultDataLabels);
 
   // Axes state
-  const [xAxis, setXAxis] = useState<AxisConfig>({
-    title: '',
-    fontSize: 11,
-    fontColor: '#666666',
-    slant: 0,
-    showGridlines: true
-  });
-  const [leftYAxis, setLeftYAxis] = useState<AxisConfig>({
-    title: '',
-    min: 'auto',
-    max: 'auto',
-    fontSize: 11,
-    fontColor: '#666666',
-    format: '#,##0',
-    showGridlines: true
-  });
-  const [rightYAxis, setRightYAxis] = useState<AxisConfig>({
-    title: '',
-    min: 'auto',
-    max: 'auto',
-    fontSize: 11,
-    fontColor: '#666666',
-    format: '#,##0',
-    showGridlines: true
-  });
+  const [xAxis, setXAxis] = useState<AxisConfig>(() => createDefaultAxis({ min: undefined, max: undefined, format: undefined }));
+  const [leftYAxis, setLeftYAxis] = useState<AxisConfig>(createDefaultAxis);
+  const [rightYAxis, setRightYAxis] = useState<AxisConfig>(createDefaultAxis);
 
   // UI state
   const [openSections, setOpenSections] = useState<Set<string>>(new Set());
   const [seriesModal, setSeriesModal] = useState<{ isOpen: boolean; series: SeriesConfig | null }>({ isOpen: false, series: null });
   const [categoryModal, setCategoryModal] = useState<{ isOpen: boolean; category: string } | null>(null);
 
+  const resetBuilderState = useCallback(() => {
+    setShowTypeSelector(true);
+    setActiveTab('setup');
+    setTitle('New Chart');
+    setType(null);
+    setDimension(availableColumns[0] || '');
+    setWidth('half');
+    setStackBy('');
+    setXDimension('');
+    setYDimension('');
+    setSizeDimension('');
+    setColorBy('');
+    setInnerRadius(0);
+    setStartAngle(0);
+    setCurveType('linear');
+    setStrokeWidth(2);
+    setSortBy('value-desc');
+    setCategoryFilter([]);
+    setCategorySearch('');
+    setBarOrientation('vertical');
+    setSeries([]);
+    setMeasure('count');
+    setMeasureCol('');
+    setCategoryConfig({});
+    setChartTitle('');
+    setSubtitle('');
+    setLegend(createDefaultLegend());
+    setDataLabels(createDefaultDataLabels());
+    setXAxis(createDefaultAxis({ min: undefined, max: undefined, format: undefined }));
+    setLeftYAxis(createDefaultAxis());
+    setRightYAxis(createDefaultAxis());
+    setOpenSections(new Set());
+    setSeriesModal({ isOpen: false, series: null });
+    setCategoryModal(null);
+  }, [availableColumns]);
+
   // Initialize
   useEffect(() => {
+    if (!isOpen) return;
+
     if (initialWidget) {
+      setShowTypeSelector(false);
+      setActiveTab('setup');
       setTitle(initialWidget.title);
       setType(initialWidget.type);
       setDimension(initialWidget.dimension);
@@ -444,17 +505,15 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       }
 
       setCategoryConfig(initialWidget.categoryConfig || {});
-      if (initialWidget.legend) setLegend(initialWidget.legend);
-      if (initialWidget.dataLabels) setDataLabels(initialWidget.dataLabels);
-      setXAxis(initialWidget.xAxis || xAxis);
-      setLeftYAxis(initialWidget.leftYAxis || leftYAxis);
-      setRightYAxis(initialWidget.rightYAxis || rightYAxis);
+      setLegend(initialWidget.legend || createDefaultLegend());
+      setDataLabels(initialWidget.dataLabels || createDefaultDataLabels());
+      setXAxis(initialWidget.xAxis || createDefaultAxis({ min: undefined, max: undefined, format: undefined }));
+      setLeftYAxis(initialWidget.leftYAxis || createDefaultAxis());
+      setRightYAxis(initialWidget.rightYAxis || createDefaultAxis());
     } else {
-      if (availableColumns.length > 0) {
-        setDimension(availableColumns[0]);
-      }
+      resetBuilderState();
     }
-  }, [initialWidget, availableColumns]);
+  }, [isOpen, initialWidget, availableColumns, resetBuilderState]);
 
   // Sorting function (must be declared before useMemo that uses it)
   const applySorting = (data: any[], order: SortOrder, valueKey: string) => {
@@ -471,6 +530,18 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       default:
         return data; // No sorting
     }
+  };
+
+  const sortByTotals = (rows: any[], order: SortOrder) => {
+    const withTotals = rows.map((row) => ({
+      ...row,
+      __total: Object.keys(row)
+        .filter((k) => k !== 'name')
+        .reduce((sum, key) => sum + (row[key] || 0), 0)
+    }));
+
+    const sorted = applySorting(withTotals, order, '__total');
+    return sorted.map(({ __total, ...rest }) => rest);
   };
 
   // Get all unique categories from data
@@ -582,13 +653,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
         });
       }
 
-      // Apply sorting (sort by first stack value)
-      const firstStackKey = result.length > 0 ? Object.keys(result[0]).find(k => k !== 'name') : undefined;
-      if (firstStackKey) {
-        result = applySorting(result, sortBy, firstStackKey);
-      }
-
-      return result;
+      return sortByTotals(result, sortBy);
     }
 
     // ========================================
@@ -644,10 +709,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
 
       let result = Object.values(groups);
 
-      // Apply sorting
-      result = applySorting(result, sortBy, series.length > 0 ? series[0].id : 'value');
-
-      return result;
+      return sortByTotals(result, sortBy);
     }
 
     // ========================================
@@ -803,7 +865,8 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
     setCategoryFilter([]);
   };
 
-  const handleBarDoubleClick = (category: string) => {
+  const handlePreviewCategoryClick = (category: string) => {
+    setActiveTab('customize');
     setCategoryModal({ isOpen: true, category });
   };
 
@@ -811,6 +874,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   const handleChartTypeSelect = (selectedType: ChartType) => {
     setType(selectedType);
     setShowTypeSelector(false);
+    setActiveTab('setup');
 
     // Set default orientation based on chart type
     const defaultOrientation = getDefaultOrientation(selectedType);
@@ -820,6 +884,15 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
     if (selectedType === 'donut') {
       setInnerRadius(50);
     }
+  };
+
+  const handleCloseTypeSelector = () => {
+    if (!type) {
+      onClose();
+      return;
+    }
+
+    setShowTypeSelector(false);
   };
 
   const showAxes = type && type !== 'pie' && type !== 'donut' && type !== 'kpi' && type !== 'wordcloud' && type !== 'table';
@@ -838,7 +911,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       <ChartTypeSelector
         isOpen={true}
         onSelect={handleChartTypeSelect}
-        onClose={onClose}
+        onClose={handleCloseTypeSelector}
       />
     );
   }
@@ -896,7 +969,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                           outerRadius="80%"
                           startAngle={startAngle}
                           label={dataLabels.enabled}
-                          onDoubleClick={(data: any) => handleBarDoubleClick(data.name)}
+                          onClick={(data: any) => handlePreviewCategoryClick(data.name)}
                           style={{ cursor: 'pointer', outline: 'none' }}
                         >
                           {previewData.map((entry: any, index) => (
@@ -1209,7 +1282,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                         {legend.enabled && <RechartsLegend />}
                         <Bar
                           dataKey="value"
-                          onDoubleClick={(data: any) => handleBarDoubleClick(data.name)}
+                          onClick={(data: any) => handlePreviewCategoryClick(data.name)}
                           style={{ cursor: 'pointer', outline: 'none' }}
                         >
                           {previewData.map((entry: any, idx) => (

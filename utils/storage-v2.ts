@@ -12,7 +12,7 @@
  * Migration: Backward compatible with storage.ts (v1)
  */
 
-import { Project, ProjectTab, RawRow, ColumnConfig, DashboardWidget, TransformationRule, ReportSlide, AISettings, AIPresets } from '../types';
+import { Project, ProjectTab, RawRow, ColumnConfig, DashboardWidget, TransformationRule, ReportSlide, AISettings, AIPresets, DataSource } from '../types';
 
 const DB_NAME = 'RealDataDB';
 const DB_VERSION = 2; // Upgraded from v1
@@ -37,6 +37,8 @@ interface ProjectMetadata {
   rowCount: number;
   chunkCount: number;
   columns: ColumnConfig[];
+  dataSources?: DataSource[];
+  activeDataSourceId?: string;
   transformRules?: TransformationRule[];
   dashboard?: DashboardWidget[];
   reportConfig?: ReportSlide[];

@@ -23,6 +23,7 @@ import {
   saveLastStateV2,
   getLastStateV2
 } from './storage-v2';
+import { ensureDataSources } from './dataSources';
 
 // V1 imports (legacy)
 import {
@@ -52,26 +53,29 @@ const migrateProjectToV2 = async (projectV1: Project): Promise<void> => {
   console.log(`[Migration] Migrating project ${projectV1.id} to v2...`);
 
   const startTime = Date.now();
+  const { project: normalized } = ensureDataSources(projectV1);
 
   // Save metadata
   await saveProjectMetadata({
-    id: projectV1.id,
-    name: projectV1.name,
-    description: projectV1.description,
-    lastModified: projectV1.lastModified,
-    rowCount: projectV1.data.length,
-    chunkCount: Math.ceil(projectV1.data.length / 1000),
-    columns: projectV1.columns,
-    transformRules: projectV1.transformRules,
-    dashboard: projectV1.dashboard,
-    reportConfig: projectV1.reportConfig,
-    aiSettings: projectV1.aiSettings,
-    aiPresets: projectV1.aiPresets,
+    id: normalized.id,
+    name: normalized.name,
+    description: normalized.description,
+    lastModified: normalized.lastModified,
+    rowCount: normalized.data.length,
+    chunkCount: Math.ceil(normalized.data.length / 1000),
+    columns: normalized.columns,
+    dataSources: normalized.dataSources,
+    activeDataSourceId: normalized.activeDataSourceId,
+    transformRules: normalized.transformRules,
+    dashboard: normalized.dashboard,
+    reportConfig: normalized.reportConfig,
+    aiSettings: normalized.aiSettings,
+    aiPresets: normalized.aiPresets,
     storageVersion: 2
   });
 
   // Save data in chunks
-  await batchInsertData(projectV1.id, projectV1.data);
+  await batchInsertData(normalized.id, normalized.data);
 
   // Delete v1 project
   try {
@@ -101,6 +105,8 @@ const convertV2ToProject = async (projectId: string): Promise<Project | null> =>
     lastModified: metadata.lastModified,
     data,
     columns: metadata.columns,
+    dataSources: metadata.dataSources,
+    activeDataSourceId: metadata.activeDataSourceId,
     transformRules: metadata.transformRules,
     dashboard: metadata.dashboard,
     reportConfig: metadata.reportConfig,
@@ -127,7 +133,9 @@ export const getProjects = async (): Promise<Project[]> => {
     );
 
     // Filter out nulls
-    const validProjects = projects.filter((p): p is Project => p !== null);
+    const validProjects = projects
+      .filter((p): p is Project => p !== null)
+      .map(p => ensureDataSources(p).project);
 
     // Check for v1 projects
     let projectsV1: Project[] = [];
@@ -155,7 +163,7 @@ export const getProjects = async (): Promise<Project[]> => {
       });
 
       // Return v1 projects for now (will be v2 on next load)
-      return [...validProjects, ...projectsV1];
+      return [...validProjects, ...projectsV1.map(p => ensureDataSources(p).project)];
     }
 
     return validProjects;
@@ -165,7 +173,7 @@ export const getProjects = async (): Promise<Project[]> => {
 
     // Fallback to v1
     try {
-      return await getProjectsV1();
+      return (await getProjectsV1()).map(p => ensureDataSources(p).project);
     } catch (v1Err) {
       console.error('[Storage] Error loading v1 projects:', v1Err);
       return [];
@@ -177,63 +185,68 @@ export const getProjects = async (): Promise<Project[]> => {
  * Save project (auto-uses v2)
  */
 export const saveProject = async (project: Project): Promise<void> => {
+  const { project: normalized } = ensureDataSources(project);
   try {
     // Check if already v2
-    const existing = await getProjectMetadata(project.id);
+    const existing = await getProjectMetadata(normalized.id);
 
     if (existing) {
       // Update metadata
       await saveProjectMetadata({
         ...existing,
-        name: project.name,
-        description: project.description,
-        columns: project.columns,
-        transformRules: project.transformRules,
-        dashboard: project.dashboard,
-        reportConfig: project.reportConfig,
-        aiSettings: project.aiSettings,
-        aiPresets: project.aiPresets
+        name: normalized.name,
+        description: normalized.description,
+        columns: normalized.columns,
+        dataSources: normalized.dataSources,
+        activeDataSourceId: normalized.activeDataSourceId,
+        transformRules: normalized.transformRules,
+        dashboard: normalized.dashboard,
+        reportConfig: normalized.reportConfig,
+        aiSettings: normalized.aiSettings,
+        aiPresets: normalized.aiPresets
       });
 
       // Check if data changed (row count different)
-      if (existing.rowCount !== project.data.length) {
+      if (existing.rowCount !== normalized.data.length) {
         // Clear old data and re-insert
-        await clearCache(project.id);
-        await batchInsertData(project.id, project.data);
+        await clearCache(normalized.id);
+        await batchInsertData(normalized.id, normalized.data);
 
         // Update row count
         await saveProjectMetadata({
           ...existing,
-          rowCount: project.data.length,
-          chunkCount: Math.ceil(project.data.length / 1000)
+          rowCount: normalized.data.length,
+          chunkCount: Math.ceil(normalized.data.length / 1000)
         });
       }
     } else {
       // New project - create as v2
       await saveProjectMetadata({
-        id: project.id,
-        name: project.name,
-        description: project.description,
+        id: normalized.id,
+        name: normalized.name,
+        description: normalized.description,
         lastModified: Date.now(),
-        rowCount: project.data.length,
-        chunkCount: Math.ceil(project.data.length / 1000),
-        columns: project.columns,
-        transformRules: project.transformRules,
-        dashboard: project.dashboard,
-        reportConfig: project.reportConfig,
-        aiSettings: project.aiSettings,
-        aiPresets: project.aiPresets,
+        rowCount: normalized.data.length,
+        chunkCount: Math.ceil(normalized.data.length / 1000),
+        columns: normalized.columns,
+        dataSources: normalized.dataSources,
+        activeDataSourceId: normalized.activeDataSourceId,
+        transformRules: normalized.transformRules,
+        dashboard: normalized.dashboard,
+        reportConfig: normalized.reportConfig,
+        aiSettings: normalized.aiSettings,
+        aiPresets: normalized.aiPresets,
         storageVersion: 2
       });
 
-      await batchInsertData(project.id, project.data);
+      await batchInsertData(normalized.id, normalized.data);
     }
 
   } catch (err) {
     console.error('[Storage] Error saving v2 project, falling back to v1:', err);
 
     // Fallback to v1
-    await saveProjectV1(project);
+    await saveProjectV1(normalized);
   }
 };
 
