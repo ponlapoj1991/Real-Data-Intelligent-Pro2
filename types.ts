@@ -82,8 +82,55 @@ export interface TransformationRule {
 
 // --- Dashboard & Widget Types (Phase 2 & 3 & 4) ---
 
-export type ChartType = 'bar' | 'line' | 'pie' | 'area' | 'kpi' | 'wordcloud' | 'table' | 'combo';
+// Chart Type - แยกชัดเจนตามมาตรฐาน Google Sheets
+export type ChartType =
+  // Column Charts (vertical)
+  | 'column'
+  | 'stacked-column'
+  | '100-stacked-column'
+
+  // Bar Charts (horizontal)
+  | 'bar'
+  | 'stacked-bar'
+  | '100-stacked-bar'
+
+  // Line Charts
+  | 'line'
+  | 'smooth-line'
+  | 'area'
+  | 'stacked-area'
+  | '100-stacked-area'
+
+  // Pie Charts
+  | 'pie'
+  | 'donut'
+
+  // Scatter
+  | 'scatter'
+  | 'bubble'
+
+  // Combo
+  | 'combo'
+
+  // Other
+  | 'table'
+  | 'kpi'
+  | 'wordcloud';
+
+// Chart Category - สำหรับจัดกลุ่ม
+export type ChartCategory = 'column' | 'bar' | 'line' | 'area' | 'pie' | 'scatter' | 'combo' | 'other';
+
+// Chart Definition - metadata สำหรับแต่ละ chart type
+export interface ChartDefinition {
+  type: ChartType;
+  category: ChartCategory;
+  label: string;
+  icon: string; // Lucide icon name
+  description: string;
+}
+
 export type AggregateMethod = 'count' | 'sum' | 'avg';
+export type SortOrder = 'value-desc' | 'value-asc' | 'name-asc' | 'name-desc' | 'original';
 
 export interface DashboardFilter {
   id: string;
@@ -162,10 +209,26 @@ export interface DashboardWidget {
   // Legacy single-series support (for backward compatibility)
   measure?: AggregateMethod;
   measureCol?: string;
-  stackBy?: string;
+  stackBy?: string;       // For stacked charts (stacked-column, stacked-bar, stacked-area)
   filters?: DashboardFilter[];
 
+  // Bubble Chart Specific
+  xDimension?: string;    // X-axis dimension for bubble/scatter
+  yDimension?: string;    // Y-axis dimension for bubble/scatter
+  sizeDimension?: string; // Size dimension for bubble chart
+  colorBy?: string;       // Color grouping dimension
+
+  // Pie/Donut Chart Specific
+  innerRadius?: number;   // 0-80 for donut effect
+  startAngle?: number;    // 0-360 degrees
+
+  // Line Chart Specific
+  curveType?: 'linear' | 'monotone' | 'step';
+  strokeWidth?: number;
+
   limit?: number;         // Limit rows (Top 10, 20, etc)
+  sortBy?: SortOrder;     // Sort order for data
+  categoryFilter?: string[]; // Selected categories to show (empty = show all)
 
   // Titles & Subtitles (NEW)
   chartTitle?: string;

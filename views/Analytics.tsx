@@ -235,8 +235,27 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
   // --- Data Processing for Widgets ---
 
+  // Sorting helper function (same as ChartBuilder)
+  const applySorting = (data: any[], order: string | undefined, valueKey: string) => {
+    const sortBy = order || 'value-desc';
+    switch (sortBy) {
+      case 'value-desc':
+        return [...data].sort((a, b) => (b[valueKey] || 0) - (a[valueKey] || 0));
+      case 'value-asc':
+        return [...data].sort((a, b) => (a[valueKey] || 0) - (b[valueKey] || 0));
+      case 'name-asc':
+        return [...data].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      case 'name-desc':
+        return [...data].sort((a, b) => String(b.name).localeCompare(String(a.name)));
+      case 'original':
+      default:
+        return data; // No sorting for timeline/date charts
+    }
+  };
+
   const processWidgetData = (widget: DashboardWidget) => {
       const widgetData = applyWidgetFilters(filteredData, widget.filters);
+
       // 1. TABLE WIDGET
       if (widget.type === 'table') {
           let processed = [...widgetData];
@@ -251,30 +270,66 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
           return { data: processed.slice(0, widget.limit || 20), isStack: false };
       }
 
-      // 2. BAR CHART LOGIC
-      if (widget.type === 'bar' && widget.stackBy) {
-          const barMode = widget.barMode || 'stacked';
-          const isPercentMode = barMode === 'percent';
+      // 2. BUBBLE / SCATTER CHARTS
+      if (widget.type === 'bubble' || widget.type === 'scatter') {
+          if (!widget.xDimension || !widget.yDimension) {
+              return { data: [], isStack: false };
+          }
+          if (widget.type === 'bubble' && !widget.sizeDimension) {
+              return { data: [], isStack: false };
+          }
+
+          const data = widgetData.map((row, idx) => ({
+              name: `Point ${idx + 1}`,
+              x: parseFloat(String(row[widget.xDimension!])) || 0,
+              y: parseFloat(String(row[widget.yDimension!])) || 0,
+              size: widget.type === 'bubble' ? (parseFloat(String(row[widget.sizeDimension!])) || 1) : 1,
+              color: widget.colorBy ? String(row[widget.colorBy]) : 'default'
+          }));
+
+          return { data, isStack: false };
+      }
+
+      // 3. STACKED CHARTS WITH STACK BY (stacked-column, stacked-bar, stacked-area, and 100% versions)
+      const isStackedChart = [
+          'stacked-column', '100-stacked-column',
+          'stacked-bar', '100-stacked-bar',
+          'stacked-area', '100-stacked-area'
+      ].includes(widget.type);
+
+      const is100Stacked = [
+          '100-stacked-column', '100-stacked-bar', '100-stacked-area'
+      ].includes(widget.type);
+
+      if (isStackedChart && widget.stackBy) {
           const stackKeys = new Set<string>();
           const groups: Record<string, Record<string, number>> = {};
 
           widgetData.forEach(row => {
               const dimVal = String(row[widget.dimension] || '(Empty)');
               const stackVal = String(row[widget.stackBy!] || '(Other)');
-              
+
+              // Apply category filter
+              if (widget.categoryFilter && widget.categoryFilter.length > 0 && !widget.categoryFilter.includes(dimVal)) {
+                  return;
+              }
+
               stackKeys.add(stackVal);
-              
+
               if (!groups[dimVal]) groups[dimVal] = {};
               if (!groups[dimVal][stackVal]) groups[dimVal][stackVal] = 0;
 
               if (widget.measure === 'count') {
                   groups[dimVal][stackVal]++;
-              } else {
-                  groups[dimVal][stackVal] += Number(row[widget.measureCol || '']) || 0;
+              } else if (widget.measure === 'sum' && widget.measureCol) {
+                  groups[dimVal][stackVal] += Number(row[widget.measureCol]) || 0;
+              } else if (widget.measure === 'avg' && widget.measureCol) {
+                  // For avg in stacked, use sum (avg doesn't make sense in stacked context)
+                  groups[dimVal][stackVal] += Number(row[widget.measureCol]) || 0;
               }
           });
 
-          const result = Object.keys(groups).map(dim => {
+          let result = Object.keys(groups).map(dim => {
               const row: any = { name: dim };
               let total = 0;
               Object.keys(groups[dim]).forEach(stack => {
@@ -285,10 +340,11 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
               return row;
           });
 
-          // Sort by total desc
-          result.sort((a, b) => b.total - a.total);
+          // Apply sorting based on widget.sortBy (sort by total)
+          result = applySorting(result, widget.sortBy, 'total');
 
-          const normalized = isPercentMode
+          // Normalize to 100% if needed
+          const normalized = is100Stacked
             ? result.map(row => {
                 const total = row.total || 0;
                 const next = { ...row } as Record<string, number | string>;
@@ -305,14 +361,14 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
           return {
               data: widget.limit ? normalized.slice(0, widget.limit) : normalized,
-              isStack: barMode !== 'grouped',
+              isStack: true,
               stackKeys: Array.from(stackKeys).sort()
           };
       }
-      
-      // 3. STANDARD CHARTS
+
+      // 4. STANDARD SINGLE-SERIES CHARTS (column, bar, line, smooth-line, area, pie, donut, kpi, wordcloud)
       const groups: Record<string, number> = {};
-      
+
       widgetData.forEach(row => {
           let groupKey = String(row[widget.dimension]);
           if (row[widget.dimension] === null || row[widget.dimension] === undefined) groupKey = "(Empty)";
@@ -333,11 +389,14 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
           keysToProcess.forEach(k => {
               if (!k) return;
               if (!groups[k]) groups[k] = 0;
-              
+
               if (widget.measure === 'count' || widget.type === 'wordcloud') {
                   groups[k]++;
-              } else {
-                  const val = Number(row[widget.measureCol || '']) || 0;
+              } else if (widget.measure === 'sum' && widget.measureCol) {
+                  const val = Number(row[widget.measureCol]) || 0;
+                  groups[k] += val;
+              } else if (widget.measure === 'avg' && widget.measureCol) {
+                  const val = Number(row[widget.measureCol]) || 0;
                   groups[k] += val;
               }
           });
@@ -350,20 +409,20 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
             : groups[k]
       }));
 
-      result.sort((a, b) => b.value - a.value);
-
-      if (widget.barMode === 'percent') {
-          const total = result.reduce((acc, curr) => acc + (curr.value || 0), 0);
-          if (total > 0) {
-              result = result.map(item => ({ ...item, value: (item.value / total) * 100 }));
-          }
+      // Apply category filter BEFORE sorting and limiting
+      if (widget.categoryFilter && widget.categoryFilter.length > 0) {
+        result = result.filter(item => widget.categoryFilter!.includes(item.name));
       }
-      
+
+      // Apply sorting based on widget.sortBy
+      result = applySorting(result, widget.sortBy, 'value');
+
+      // Legacy limit support (use categoryFilter instead for new widgets)
       const limit = widget.limit || 20;
 
-      if (result.length > limit) {
+      if (!widget.categoryFilter && result.length > limit) {
           if (widget.type === 'wordcloud') {
-               result = result.slice(0, limit); 
+               result = result.slice(0, limit);
           } else {
                const others = result.slice(limit).reduce((acc, curr) => acc + curr.value, 0);
                result = result.slice(0, limit);
@@ -397,6 +456,11 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       // Aggregate
       data.forEach(row => {
         const dimValue = String(row[widget.dimension] || 'N/A');
+
+        // Apply category filter
+        if (widget.categoryFilter && widget.categoryFilter.length > 0 && !widget.categoryFilter.includes(dimValue)) {
+          return;
+        }
 
         if (!result[dimValue]) {
           result[dimValue] = { [widget.dimension]: dimValue };
@@ -433,14 +497,52 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       });
     });
 
-    // Sort and limit
-    const sorted = Object.values(result)
-      .sort((a, b) => {
-        const aVal = widget.series!.reduce((sum, s) => sum + (a[s.id] || 0), 0);
-        const bVal = widget.series!.reduce((sum, s) => sum + (b[s.id] || 0), 0);
-        return bVal - aVal;
-      })
-      .slice(0, widget.limit || 20);
+    // Apply sorting based on widget.sortBy
+    let sorted = Object.values(result);
+    const sortBy = widget.sortBy || 'value-desc';
+    const firstSeriesId = widget.series[0]?.id || '';
+
+    switch (sortBy) {
+      case 'value-desc':
+        sorted = sorted.sort((a, b) => {
+          const aVal = widget.series!.reduce((sum, s) => sum + (a[s.id] || 0), 0);
+          const bVal = widget.series!.reduce((sum, s) => sum + (b[s.id] || 0), 0);
+          return bVal - aVal;
+        });
+        break;
+      case 'value-asc':
+        sorted = sorted.sort((a, b) => {
+          const aVal = widget.series!.reduce((sum, s) => sum + (a[s.id] || 0), 0);
+          const bVal = widget.series!.reduce((sum, s) => sum + (b[s.id] || 0), 0);
+          return aVal - bVal;
+        });
+        break;
+      case 'name-asc':
+        sorted = sorted.sort((a, b) => String(a[widget.dimension]).localeCompare(String(b[widget.dimension])));
+        break;
+      case 'name-desc':
+        sorted = sorted.sort((a, b) => String(b[widget.dimension]).localeCompare(String(a[widget.dimension])));
+        break;
+      case 'original':
+      default:
+        // No sorting for timeline/date charts
+        break;
+    }
+
+    // Normalize to 100% for stacked bar
+    if (widget.type === 'stacked-bar') {
+      sorted = sorted.map(row => {
+        const total = widget.series!.reduce((sum, s) => sum + (row[s.id] || 0), 0);
+        if (total > 0) {
+          const normalized: any = { [widget.dimension]: row[widget.dimension] };
+          widget.series!.forEach(s => {
+            normalized[s.id] = ((row[s.id] || 0) / total) * 100;
+          });
+          return normalized;
+        }
+        return row;
+      });
+    }
 
     return sorted;
   };
@@ -483,6 +585,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
         const leftYAxisConfig = widget.leftYAxis || { fontSize: 11, fontColor: '#666666', min: 'auto', max: 'auto', format: '#,##0', showGridlines: true };
         const rightYAxisConfig = widget.rightYAxis || { fontSize: 11, fontColor: '#666666', min: 'auto', max: 'auto', format: '#,##0', showGridlines: false };
         const dataLabelsConfig = widget.dataLabels || { enabled: false, position: 'top', fontSize: 11, fontWeight: 'normal', color: '#000000' };
+        const barOrientation = widget.barOrientation || 'vertical';
 
         return (
           <div className="h-full flex flex-col">
@@ -495,39 +598,60 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
             )}
 
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={data}>
+              <ComposedChart
+                data={data}
+                layout={barOrientation === 'horizontal' ? 'vertical' : 'horizontal'}
+              >
                 <CartesianGrid
                   strokeDasharray="3 3"
                   stroke="#f0f0f0"
                 />
-                <XAxis
-                  dataKey={widget.dimension}
-                  angle={xAxisConfig.slant || 0}
-                  textAnchor={xAxisConfig.slant ? 'end' : 'middle'}
-                  height={xAxisConfig.slant === 90 ? 100 : xAxisConfig.slant === 45 ? 80 : 60}
-                  tick={{ fontSize: xAxisConfig.fontSize, fill: xAxisConfig.fontColor }}
-                  label={xAxisConfig.title ? { value: xAxisConfig.title, position: 'insideBottom', offset: -5 } : undefined}
-                />
-                <YAxis
-                  yAxisId="left"
-                  tick={{ fontSize: leftYAxisConfig.fontSize, fill: leftYAxisConfig.fontColor }}
-                  label={leftYAxisConfig.title ? { value: leftYAxisConfig.title, angle: -90, position: 'insideLeft' } : undefined}
-                  domain={[
-                    leftYAxisConfig.min === 'auto' ? 'auto' : leftYAxisConfig.min,
-                    leftYAxisConfig.max === 'auto' ? 'auto' : leftYAxisConfig.max
-                  ]}
-                />
-                {hasRightAxis && (
-                  <YAxis
-                    yAxisId="right"
-                    orientation="right"
-                    tick={{ fontSize: rightYAxisConfig.fontSize, fill: rightYAxisConfig.fontColor }}
-                    label={rightYAxisConfig.title ? { value: rightYAxisConfig.title, angle: 90, position: 'insideRight' } : undefined}
-                    domain={[
-                      rightYAxisConfig.min === 'auto' ? 'auto' : rightYAxisConfig.min,
-                      rightYAxisConfig.max === 'auto' ? 'auto' : rightYAxisConfig.max
-                    ]}
-                  />
+                {barOrientation === 'vertical' ? (
+                  <>
+                    <XAxis
+                      dataKey={widget.dimension}
+                      angle={xAxisConfig.slant || 0}
+                      textAnchor={xAxisConfig.slant ? 'end' : 'middle'}
+                      height={xAxisConfig.slant === 90 ? 100 : xAxisConfig.slant === 45 ? 80 : 60}
+                      tick={{ fontSize: xAxisConfig.fontSize, fill: xAxisConfig.fontColor }}
+                      label={xAxisConfig.title ? { value: xAxisConfig.title, position: 'insideBottom', offset: -5 } : undefined}
+                    />
+                    <YAxis
+                      yAxisId="left"
+                      tick={{ fontSize: leftYAxisConfig.fontSize, fill: leftYAxisConfig.fontColor }}
+                      label={leftYAxisConfig.title ? { value: leftYAxisConfig.title, angle: -90, position: 'insideLeft' } : undefined}
+                      domain={[
+                        leftYAxisConfig.min === 'auto' ? 'auto' : leftYAxisConfig.min,
+                        leftYAxisConfig.max === 'auto' ? 'auto' : leftYAxisConfig.max
+                      ]}
+                    />
+                    {hasRightAxis && (
+                      <YAxis
+                        yAxisId="right"
+                        orientation="right"
+                        tick={{ fontSize: rightYAxisConfig.fontSize, fill: rightYAxisConfig.fontColor }}
+                        label={rightYAxisConfig.title ? { value: rightYAxisConfig.title, angle: 90, position: 'insideRight' } : undefined}
+                        domain={[
+                          rightYAxisConfig.min === 'auto' ? 'auto' : rightYAxisConfig.min,
+                          rightYAxisConfig.max === 'auto' ? 'auto' : rightYAxisConfig.max
+                        ]}
+                      />
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <XAxis
+                      type="number"
+                      tick={{ fontSize: leftYAxisConfig.fontSize, fill: leftYAxisConfig.fontColor }}
+                      label={leftYAxisConfig.title ? { value: leftYAxisConfig.title, position: 'insideBottom', offset: -5 } : undefined}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey={widget.dimension}
+                      tick={{ fontSize: xAxisConfig.fontSize, fill: xAxisConfig.fontColor }}
+                      label={xAxisConfig.title ? { value: xAxisConfig.title, angle: -90, position: 'insideLeft' } : undefined}
+                    />
+                  </>
                 )}
                 <Tooltip />
                 {legendConfig.enabled && (
@@ -540,10 +664,11 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
 
                 {widget.series.map((s, idx) => {
                   const Component = s.type === 'line' ? Line : s.type === 'area' ? Area : Bar;
+                  const barProps = s.type === 'bar' && widget.type === 'stacked-bar' ? { stackId: 'stack' } : {};
                   return (
                     <Component
                       key={s.id}
-                      yAxisId={s.yAxis}
+                      yAxisId={barOrientation === 'vertical' ? s.yAxis : undefined}
                       type="monotone"
                       dataKey={s.id}
                       name={s.label}
@@ -553,6 +678,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                       strokeWidth={s.type === 'line' ? 2 : 0}
                       onClick={(barData: any) => handleChartClick(null, widget, barData[widget.dimension])}
                       className="cursor-pointer"
+                      {...barProps}
                     >
                       {dataLabelsConfig.enabled && (
                         <LabelList
@@ -586,8 +712,14 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       if (!data || data.length === 0) return <div className="flex items-center justify-center h-full text-gray-400 text-sm">No Data</div>;
 
       switch (widget.type) {
+          // Bar/Column charts + Stacked variants
+          case 'column':
+          case 'stacked-column':
+          case '100-stacked-column':
           case 'bar':
-              const isHorizontal = (widget.barOrientation || 'horizontal') === 'horizontal';
+          case 'stacked-bar':
+          case '100-stacked-bar':
+              const isHorizontal = ['bar', 'stacked-bar', '100-stacked-bar'].includes(widget.type);
               const layout = isHorizontal ? 'vertical' : 'horizontal';
               const legendConfig = {
                   top: { verticalAlign: 'top' as const, align: 'center' as const },
@@ -659,6 +791,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                   </ResponsiveContainer>
               );
           case 'pie':
+          case 'donut':
               return (
                   <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
@@ -666,7 +799,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                               data={data as any[]}
                               cx="50%"
                               cy="50%"
-                              innerRadius={60}
+                              innerRadius={widget.type === 'donut' ? (widget.innerRadius || 50) : 0}
                               outerRadius={80}
                               paddingAngle={5}
                               dataKey="value"
@@ -685,10 +818,14 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                   </ResponsiveContainer>
               );
           case 'line':
+          case 'smooth-line':
           case 'area':
+          case 'stacked-area':
+          case '100-stacked-area':
                const sortedData = [...(data as any[])].sort((a,b) => a.name.localeCompare(b.name));
-               const ChartComp = widget.type === 'line' ? LineChart : AreaChart;
-               const DataComp = widget.type === 'line' ? Line : Area;
+               const isLineChart = widget.type === 'line' || widget.type === 'smooth-line';
+               const ChartComp = isLineChart ? LineChart : AreaChart;
+               const DataComp = isLineChart ? Line : Area;
                const primaryColor = widget.color || palette[0] || '#3B82F6';
                return (
                   <ResponsiveContainer width="100%" height="100%">
@@ -701,22 +838,67 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
                           <XAxis dataKey="name" tick={{fontSize: 11}} />
                           <YAxis tick={{fontSize: 11}} tickFormatter={(val) => formatWidgetValue(widget, Number(val) || 0)} />
                           <Tooltip contentStyle={{borderRadius: '8px'}} />
-                          <DataComp
-                            type="monotone"
-                            dataKey="value"
-                            stroke={primaryColor}
-                            fill={primaryColor}
-                            fillOpacity={0.2}
-                            strokeWidth={2}
-                            dot={{r: 4}}
-                            activeDot={{r: 6}}
-                            className="cursor-pointer"
-                          >
-                              {showValues && <LabelList dataKey="value" position="top" formatter={(val: number) => formatWidgetValue(widget, Number(val) || 0)} />}
-                          </DataComp>
+                          {/* Render stacked areas if stackKeys present */}
+                          {stackKeys && stackKeys.length ? (
+                              stackKeys.map((key, idx) => (
+                                  <DataComp
+                                    key={key}
+                                    type={widget.type === 'smooth-line' ? 'monotone' : (widget.curveType || 'linear')}
+                                    dataKey={key}
+                                    name={key}
+                                    stackId={isStack ? 'stack' : undefined}
+                                    stroke={getWidgetColor(widget, key, idx)}
+                                    fill={getWidgetColor(widget, key, idx)}
+                                    fillOpacity={0.2}
+                                    strokeWidth={widget.strokeWidth || 2}
+                                    dot={{r: 4}}
+                                    activeDot={{r: 6}}
+                                    className="cursor-pointer"
+                                  >
+                                      {showValues && <LabelList dataKey={key} position="top" formatter={labelFormatter} />}
+                                  </DataComp>
+                              ))
+                          ) : (
+                              <DataComp
+                                type={widget.type === 'smooth-line' ? 'monotone' : (widget.curveType || 'linear')}
+                                dataKey="value"
+                                stroke={primaryColor}
+                                fill={primaryColor}
+                                fillOpacity={0.2}
+                                strokeWidth={widget.strokeWidth || 2}
+                                dot={{r: 4}}
+                                activeDot={{r: 6}}
+                                className="cursor-pointer"
+                              >
+                                  {showValues && <LabelList dataKey="value" position="top" formatter={(val: number) => formatWidgetValue(widget, Number(val) || 0)} />}
+                              </DataComp>
+                          )}
                           {showLegend && <Legend iconType="circle" wrapperStyle={{fontSize: '12px'}} />}
                       </ChartComp>
                   </ResponsiveContainer>
+               );
+           case 'scatter':
+           case 'bubble':
+               return (
+                   <ResponsiveContainer width="100%" height="100%">
+                       <ComposedChart>
+                           <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                           <XAxis dataKey="x" type="number" tick={{fontSize: 11}} label={{value: widget.xDimension, position: 'bottom'}} />
+                           <YAxis dataKey="y" type="number" tick={{fontSize: 11}} label={{value: widget.yDimension, angle: -90, position: 'left'}} />
+                           <Tooltip cursor={{strokeDasharray: '3 3'}} />
+                           {showLegend && <Legend iconType="circle" wrapperStyle={{fontSize: '12px'}} />}
+                           <Line
+                               type="scatter"
+                               dataKey="y"
+                               stroke={palette[0]}
+                               fill={palette[0]}
+                               dot={(props: any) => {
+                                   const size = widget.type === 'bubble' ? Math.max(4, Math.min(20, props.payload.size)) : 6;
+                                   return <circle cx={props.cx} cy={props.cy} r={size} fill={palette[0]} stroke="white" strokeWidth={1} />;
+                               }}
+                           />
+                       </ComposedChart>
+                   </ResponsiveContainer>
                );
            case 'kpi':
                const total = (data as any[]).reduce((acc, curr) => acc + curr.value, 0);

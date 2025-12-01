@@ -1,21 +1,12 @@
 /**
- * ChartBuilder v6.0 - Complete Chart System Redesign
+ * ChartBuilder v5.1 - Complete Combo Chart + All Fixes
  *
- * NEW FEATURES:
- * - Chart Type Selector Screen (Google Sheets style)
- * - Chart-specific configuration forms
- * - 23 chart types with proper metadata
- * - Stack By field for stacked charts
- * - Bubble chart support (3D scatter)
- * - Pie/Donut specific configs
- * - Line curve types
- *
- * PREVIOUS FIXES (v5.1):
- * 1. Column Field shows in Series Modal
- * 2. Sort Options (5 types)
- * 3. Bar Orientation
- * 4. Category Filter
- * 5. Double-click colors
+ * FIXES:
+ * 1. Column Field shows in Series Modal (when Sum/Average)
+ * 2. Sort Options (Value, Name, Original Order)
+ * 3. Bar Orientation (Vertical/Horizontal)
+ * 4. Category Filter (checkbox list instead of limit)
+ * 5. Double-click to change bar colors
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
@@ -32,9 +23,6 @@ import {
   SeriesConfig,
   SortOrder
 } from '../types';
-import ChartTypeSelector from './ChartTypeSelector';
-import ChartConfigForm from './ChartConfigForm';
-import { getDefaultOrientation } from '../utils/chartConfigHelpers';
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -330,40 +318,21 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
   initialWidget,
   data
 }) => {
-  // UI State
-  const [showTypeSelector, setShowTypeSelector] = useState(true); // Show type selector first
   const [activeTab, setActiveTab] = useState<'setup' | 'customize'>('setup');
 
   // Widget state
   const [title, setTitle] = useState('New Chart');
-  const [type, setType] = useState<ChartType | null>(null); // null until selected
+  const [type, setType] = useState<ChartType>('bar');
   const [dimension, setDimension] = useState('');
   const [width, setWidth] = useState<'half' | 'full'>('half');
 
-  // Stacked Charts
-  const [stackBy, setStackBy] = useState('');
-
-  // Bubble/Scatter
-  const [xDimension, setXDimension] = useState('');
-  const [yDimension, setYDimension] = useState('');
-  const [sizeDimension, setSizeDimension] = useState('');
-  const [colorBy, setColorBy] = useState('');
-
-  // Pie/Donut
-  const [innerRadius, setInnerRadius] = useState(0);
-  const [startAngle, setStartAngle] = useState(0);
-
-  // Line
-  const [curveType, setCurveType] = useState<'linear' | 'monotone' | 'step'>('linear');
-  const [strokeWidth, setStrokeWidth] = useState(2);
-
-  // Sort & Filter
+  // NEW: Sort & Orientation
   const [sortBy, setSortBy] = useState<SortOrder>('value-desc');
+  const [barOrientation, setBarOrientation] = useState<'vertical' | 'horizontal'>('vertical');
+
+  // NEW: Category Filter (replaces limit)
   const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
   const [categorySearch, setCategorySearch] = useState('');
-
-  // Bar Orientation (deprecated - now determined by chart type)
-  const [barOrientation, setBarOrientation] = useState<'vertical' | 'horizontal'>('vertical');
 
   // Multiple Series (for Combo charts)
   const [series, setSeries] = useState<SeriesConfig[]>([]);
@@ -486,117 +455,10 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
 
   // Aggregate data for preview
   const previewData = useMemo(() => {
-    if (!type) return [];
+    if (!dimension || data.length === 0) return [];
 
-    // ========================================
-    // BUBBLE / SCATTER CHARTS
-    // ========================================
-    if (type === 'bubble' || type === 'scatter') {
-      if (!xDimension || !yDimension) return [];
-      if (type === 'bubble' && !sizeDimension) return [];
-
-      return data.map((row, idx) => ({
-        name: `Point ${idx + 1}`,
-        x: parseFloat(String(row[xDimension])) || 0,
-        y: parseFloat(String(row[yDimension])) || 0,
-        size: type === 'bubble' ? (parseFloat(String(row[sizeDimension])) || 1) : 1,
-        color: colorBy ? String(row[colorBy]) : 'default'
-      }));
-    }
-
-    // ========================================
-    // STACKED CHARTS WITH STACK BY
-    // ========================================
-    const isStackedChart = [
-      'stacked-column', '100-stacked-column',
-      'stacked-bar', '100-stacked-bar',
-      'stacked-area', '100-stacked-area'
-    ].includes(type);
-
-    const is100Stacked = [
-      '100-stacked-column', '100-stacked-bar', '100-stacked-area'
-    ].includes(type);
-
-    if (isStackedChart && stackBy) {
-      if (!dimension) return [];
-
-      // Group by dimension, then by stackBy value
-      const groups: Record<string, Record<string, number>> = {};
-
-      data.forEach(row => {
-        const dimValue = String(row[dimension] || 'N/A');
-        const stackValue = String(row[stackBy] || 'N/A');
-
-        // Apply category filter
-        if (categoryFilter.length > 0 && !categoryFilter.includes(dimValue)) {
-          return;
-        }
-
-        if (!groups[dimValue]) {
-          groups[dimValue] = {};
-        }
-
-        if (!groups[dimValue][stackValue]) {
-          groups[dimValue][stackValue] = 0;
-        }
-
-        // Calculate based on measure
-        if (measure === 'count') {
-          groups[dimValue][stackValue]++;
-        } else if (measure === 'sum' && measureCol) {
-          const val = parseFloat(String(row[measureCol])) || 0;
-          groups[dimValue][stackValue] += val;
-        } else if (measure === 'avg' && measureCol) {
-          // For avg in stacked, use sum (avg doesn't make sense in stacked context)
-          const val = parseFloat(String(row[measureCol])) || 0;
-          groups[dimValue][stackValue] += val;
-        }
-      });
-
-      // Convert to array format
-      let result = Object.keys(groups).map(dimKey => {
-        const row: any = { name: dimKey };
-        Object.keys(groups[dimKey]).forEach(stackKey => {
-          row[stackKey] = groups[dimKey][stackKey];
-        });
-        return row;
-      });
-
-      // Normalize to 100% if needed
-      if (is100Stacked) {
-        result = result.map(row => {
-          const total = Object.keys(row)
-            .filter(k => k !== 'name')
-            .reduce((sum, k) => sum + (row[k] || 0), 0);
-
-          if (total > 0) {
-            const normalized: any = { name: row.name };
-            Object.keys(row).forEach(k => {
-              if (k !== 'name') {
-                normalized[k] = ((row[k] || 0) / total) * 100;
-              }
-            });
-            return normalized;
-          }
-          return row;
-        });
-      }
-
-      // Apply sorting (sort by first stack value)
-      const firstStackKey = result.length > 0 ? Object.keys(result[0]).find(k => k !== 'name') : undefined;
-      if (firstStackKey) {
-        result = applySorting(result, sortBy, firstStackKey);
-      }
-
-      return result;
-    }
-
-    // ========================================
-    // MULTI-SERIES CHARTS (Combo)
-    // ========================================
-    if (type === 'combo' && series.length > 0) {
-      if (!dimension) return [];
-
+    // For multi-series (Combo chart & Stacked bar)
+    if ((type === 'combo' || type === 'stacked-bar') && series.length > 0) {
       const groups: Record<string, any> = {};
 
       data.forEach(row => {
@@ -647,14 +509,25 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       // Apply sorting
       result = applySorting(result, sortBy, series.length > 0 ? series[0].id : 'value');
 
+      // Normalize to 100% for stacked bar
+      if (type === 'stacked-bar') {
+        result = result.map(row => {
+          const total = series.reduce((sum, s) => sum + (row[s.id] || 0), 0);
+          if (total > 0) {
+            const normalized: any = { name: row.name };
+            series.forEach(s => {
+              normalized[s.id] = ((row[s.id] || 0) / total) * 100;
+            });
+            return normalized;
+          }
+          return row;
+        });
+      }
+
       return result;
     }
 
-    // ========================================
-    // SINGLE-SERIES CHARTS (column, bar, line, area, pie, donut)
-    // ========================================
-    if (!dimension) return [];
-
+    // For single-series (legacy)
     const groups: Record<string, number> = {};
 
     data.forEach(row => {
@@ -704,7 +577,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
     result = applySorting(result, sortBy, 'value');
 
     return result;
-  }, [dimension, measure, measureCol, data, type, series, categoryFilter, sortBy, stackBy, xDimension, yDimension, sizeDimension, colorBy]);
+  }, [dimension, measure, measureCol, data, type, series, categoryFilter, sortBy]);
 
   const toggleSection = (section: string) => {
     const newSections = new Set(openSections);
@@ -720,7 +593,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
     const widget: DashboardWidget = {
       id: initialWidget?.id || generateId(),
       title,
-      type: type!,
+      type,
       dimension,
       width,
       sortBy,
@@ -733,31 +606,14 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
       xAxis,
       leftYAxis,
       rightYAxis,
-      categoryConfig,
-
-      // Stacked charts
-      stackBy: stackBy || undefined,
-
-      // Bubble/Scatter
-      xDimension: xDimension || undefined,
-      yDimension: yDimension || undefined,
-      sizeDimension: sizeDimension || undefined,
-      colorBy: colorBy || undefined,
-
-      // Pie/Donut
-      innerRadius: type === 'donut' ? innerRadius : undefined,
-      startAngle: (type === 'pie' || type === 'donut') ? startAngle : undefined,
-
-      // Line
-      curveType: (type === 'line' || type === 'smooth-line' || type?.includes('area')) ? curveType : undefined,
-      strokeWidth: (type === 'line' || type === 'smooth-line' || type?.includes('area')) ? strokeWidth : undefined
+      categoryConfig
     };
 
-    // Add series for multi-series charts
-    if ((type === 'combo' || type === 'stacked-bar' || type === '100-stacked-bar') && series.length > 0) {
+    // Add series for combo chart
+    if (type === 'combo' && series.length > 0) {
       widget.series = series;
     } else {
-      // Single-series
+      // Legacy single-series
       widget.measure = measure;
       widget.measureCol = measureCol || undefined;
     }
@@ -807,41 +663,15 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
     setCategoryModal({ isOpen: true, category });
   };
 
-  // Handle chart type selection
-  const handleChartTypeSelect = (selectedType: ChartType) => {
-    setType(selectedType);
-    setShowTypeSelector(false);
-
-    // Set default orientation based on chart type
-    const defaultOrientation = getDefaultOrientation(selectedType);
-    setBarOrientation(defaultOrientation);
-
-    // Reset specific fields based on type
-    if (selectedType === 'donut') {
-      setInnerRadius(50);
-    }
-  };
-
-  const showAxes = type && type !== 'pie' && type !== 'donut' && type !== 'kpi' && type !== 'wordcloud' && type !== 'table';
+  const showAxes = type !== 'pie' && type !== 'kpi' && type !== 'wordcloud' && type !== 'table';
   const isComboChart = type === 'combo';
-  const isMultiSeriesChart = type === 'combo' || type === 'stacked-bar' || type === '100-stacked-bar';
+  const isMultiSeriesChart = type === 'combo' || type === 'stacked-bar';
 
   const filteredCategories = allCategories.filter(cat =>
     cat.toLowerCase().includes(categorySearch.toLowerCase())
   );
 
   if (!isOpen) return null;
-
-  // Show ChartTypeSelector if no type selected
-  if (showTypeSelector || type === null) {
-    return (
-      <ChartTypeSelector
-        isOpen={true}
-        onSelect={handleChartTypeSelect}
-        onClose={onClose}
-      />
-    );
-  }
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -883,8 +713,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                   )}
 
                   <ResponsiveContainer width="100%" height={400}>
-                    {/* PIE CHART */}
-                    {type === 'pie' || type === 'donut' ? (
+                    {type === 'pie' ? (
                       <PieChart>
                         <Pie
                           data={previewData}
@@ -892,9 +721,6 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                           nameKey="name"
                           cx="50%"
                           cy="50%"
-                          innerRadius={type === 'donut' ? `${innerRadius}%` : 0}
-                          outerRadius="80%"
-                          startAngle={startAngle}
                           label={dataLabels.enabled}
                           onDoubleClick={(data: any) => handleBarDoubleClick(data.name)}
                           style={{ cursor: 'pointer', outline: 'none' }}
@@ -909,83 +735,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                         {legend.enabled && <RechartsLegend />}
                         <Tooltip />
                       </PieChart>
-                    ) : /* STACKED CHARTS WITH STACK BY */ [
-                      'stacked-column', '100-stacked-column',
-                      'stacked-bar', '100-stacked-bar',
-                      'stacked-area', '100-stacked-area'
-                    ].includes(type) && stackBy ? (
-                      <ComposedChart data={previewData} layout={barOrientation === 'horizontal' ? 'vertical' : 'horizontal'}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        {barOrientation === 'vertical' ? (
-                          <>
-                            <XAxis
-                              dataKey="name"
-                              angle={xAxis.slant || 0}
-                              textAnchor={xAxis.slant ? 'end' : 'middle'}
-                              height={xAxis.slant === 90 ? 100 : xAxis.slant === 45 ? 80 : 60}
-                              tick={{ fontSize: xAxis.fontSize, fill: xAxis.fontColor }}
-                              style={{ outline: 'none' }}
-                            />
-                            <YAxis
-                              tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }}
-                              domain={[
-                                leftYAxis.min === 'auto' ? 'auto' : leftYAxis.min,
-                                leftYAxis.max === 'auto' ? 'auto' : leftYAxis.max
-                              ]}
-                              style={{ outline: 'none' }}
-                            />
-                          </>
-                        ) : (
-                          <>
-                            <XAxis
-                              type="number"
-                              tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }}
-                              style={{ outline: 'none' }}
-                            />
-                            <YAxis
-                              type="category"
-                              dataKey="name"
-                              tick={{ fontSize: xAxis.fontSize, fill: xAxis.fontColor }}
-                              style={{ outline: 'none' }}
-                            />
-                          </>
-                        )}
-                        <Tooltip />
-                        {legend.enabled && <RechartsLegend />}
-
-                        {/* Render stacked bars/areas */}
-                        {previewData.length > 0 &&
-                          Object.keys(previewData[0])
-                            .filter(key => key !== 'name')
-                            .map((stackKey, idx) => {
-                              if (type.includes('area')) {
-                                return (
-                                  <Area
-                                    key={stackKey}
-                                    dataKey={stackKey}
-                                    name={stackKey}
-                                    fill={COLORS[idx % COLORS.length]}
-                                    stroke={COLORS[idx % COLORS.length]}
-                                    stackId="stack"
-                                    type={curveType}
-                                    style={{ outline: 'none' }}
-                                  />
-                                );
-                              } else {
-                                return (
-                                  <Bar
-                                    key={stackKey}
-                                    dataKey={stackKey}
-                                    name={stackKey}
-                                    fill={COLORS[idx % COLORS.length]}
-                                    stackId="stack"
-                                    style={{ outline: 'none' }}
-                                  />
-                                );
-                              }
-                            })}
-                      </ComposedChart>
-                    ) : /* COMBO CHART */ type === 'combo' && series.length > 0 ? (
+                    ) : isMultiSeriesChart && series.length > 0 ? (
                       <ComposedChart data={previewData} layout={barOrientation === 'horizontal' ? 'vertical' : 'horizontal'}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                         {barOrientation === 'vertical' ? (
@@ -1047,6 +797,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                                 name={s.label}
                                 fill={s.color}
                                 yAxisId={barOrientation === 'vertical' ? s.yAxis : undefined}
+                                stackId={type === 'stacked-bar' ? 'stack' : undefined}
                                 style={{ outline: 'none' }}
                               />
                             );
@@ -1057,9 +808,8 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                                 dataKey={s.id}
                                 name={s.label}
                                 stroke={s.color}
-                                strokeWidth={strokeWidth || 2}
+                                strokeWidth={2}
                                 yAxisId={barOrientation === 'vertical' ? s.yAxis : undefined}
-                                type={curveType}
                                 dot={{ r: 4 }}
                                 style={{ outline: 'none' }}
                               />
@@ -1073,7 +823,6 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                                 fill={s.color}
                                 stroke={s.color}
                                 yAxisId={barOrientation === 'vertical' ? s.yAxis : undefined}
-                                type={curveType}
                                 style={{ outline: 'none' }}
                               />
                             );
@@ -1081,7 +830,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                           return null;
                         })}
                       </ComposedChart>
-                    ) : /* LINE / SMOOTH-LINE CHARTS */ type === 'line' || type === 'smooth-line' ? (
+                    ) : type === 'line' ? (
                       <ComposedChart data={previewData}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                         <XAxis
@@ -1103,10 +852,10 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                         <Tooltip />
                         {legend.enabled && <RechartsLegend />}
                         <Line
-                          type={type === 'smooth-line' ? 'monotone' : curveType}
+                          type="monotone"
                           dataKey="value"
                           stroke={COLORS[0]}
-                          strokeWidth={strokeWidth}
+                          strokeWidth={2}
                           dot={{ r: 4 }}
                           style={{ outline: 'none' }}
                         >
@@ -1123,49 +872,7 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
                           )}
                         </Line>
                       </ComposedChart>
-                    ) : /* AREA CHART (non-stacked) */ type === 'area' ? (
-                      <ComposedChart data={previewData}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis
-                          dataKey="name"
-                          angle={xAxis.slant || 0}
-                          textAnchor={xAxis.slant ? 'end' : 'middle'}
-                          height={xAxis.slant === 90 ? 100 : xAxis.slant === 45 ? 80 : 60}
-                          tick={{ fontSize: xAxis.fontSize, fill: xAxis.fontColor }}
-                          style={{ outline: 'none' }}
-                        />
-                        <YAxis
-                          tick={{ fontSize: leftYAxis.fontSize, fill: leftYAxis.fontColor }}
-                          domain={[
-                            leftYAxis.min === 'auto' ? 'auto' : leftYAxis.min,
-                            leftYAxis.max === 'auto' ? 'auto' : leftYAxis.max
-                          ]}
-                          style={{ outline: 'none' }}
-                        />
-                        <Tooltip />
-                        {legend.enabled && <RechartsLegend />}
-                        <Area
-                          type={curveType}
-                          dataKey="value"
-                          fill={COLORS[0]}
-                          stroke={COLORS[0]}
-                          fillOpacity={0.6}
-                          style={{ outline: 'none' }}
-                        >
-                          {dataLabels.enabled && (
-                            <LabelList
-                              dataKey="value"
-                              position={dataLabels.position as any}
-                              style={{
-                                fontSize: dataLabels.fontSize,
-                                fontWeight: dataLabels.fontWeight,
-                                fill: dataLabels.color
-                              }}
-                            />
-                          )}
-                        </Area>
-                      </ComposedChart>
-                    ) : /* BAR / COLUMN CHARTS */ (
+                    ) : (
                       <BarChart
                         data={previewData}
                         layout={barOrientation === 'horizontal' ? 'vertical' : 'horizontal'}
@@ -1274,70 +981,278 @@ const ChartBuilder: React.FC<ChartBuilderProps> = ({
             <div className="flex-1 overflow-y-auto p-4">
               {activeTab === 'setup' && (
                 <div className="space-y-4">
-                  {/* Chart Type Info with Change Button */}
-                  <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-xs text-gray-600">Chart Type</p>
-                        <p className="text-base font-semibold text-gray-900 mt-1">
-                          {type && type.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => setShowTypeSelector(true)}
-                        className="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50"
-                      >
-                        Change Type
-                      </button>
-                    </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Chart Type</label>
+                    <select
+                      value={type}
+                      onChange={(e) => setType(e.target.value as ChartType)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                      style={{ outline: 'none' }}
+                    >
+                      <option value="bar">Bar</option>
+                      <option value="line">Line</option>
+                      <option value="area">Area</option>
+                      <option value="combo">Combo (Bar + Line)</option>
+                      <option value="stacked-bar">Stacked Bar (100%)</option>
+                      <option value="bubble">Bubble Chart</option>
+                      <option value="pie">Pie</option>
+                      <option value="kpi">KPI</option>
+                      <option value="wordcloud">Word Cloud</option>
+                      <option value="table">Table</option>
+                    </select>
                   </div>
 
-                  {/* Chart Config Form */}
-                  <ChartConfigForm
-                    chartType={type!}
-                    availableColumns={availableColumns}
-                    dimension={dimension}
-                    setDimension={setDimension}
-                    stackBy={stackBy}
-                    setStackBy={setStackBy}
-                    measure={measure}
-                    setMeasure={setMeasure}
-                    measureCol={measureCol}
-                    setMeasureCol={setMeasureCol}
-                    series={series}
-                    onAddSeries={handleAddSeries}
-                    onEditSeries={handleEditSeries}
-                    onDeleteSeries={handleDeleteSeries}
-                    xDimension={xDimension}
-                    setXDimension={setXDimension}
-                    yDimension={yDimension}
-                    setYDimension={setYDimension}
-                    sizeDimension={sizeDimension}
-                    setSizeDimension={setSizeDimension}
-                    colorBy={colorBy}
-                    setColorBy={setColorBy}
-                    innerRadius={innerRadius}
-                    setInnerRadius={setInnerRadius}
-                    startAngle={startAngle}
-                    setStartAngle={setStartAngle}
-                    curveType={curveType}
-                    setCurveType={setCurveType}
-                    strokeWidth={strokeWidth}
-                    setStrokeWidth={setStrokeWidth}
-                    sortBy={sortBy}
-                    setSortBy={setSortBy}
-                    categoryFilter={categoryFilter}
-                    setCategoryFilter={setCategoryFilter}
-                    allCategories={allCategories}
-                    categorySearch={categorySearch}
-                    setCategorySearch={setCategorySearch}
-                    onCategoryToggle={handleCategoryToggle}
-                    onSelectAllCategories={handleSelectAllCategories}
-                    onClearAllCategories={handleClearAllCategories}
-                  />
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Dimension (X-Axis)</label>
+                    <select
+                      value={dimension}
+                      onChange={(e) => setDimension(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                      style={{ outline: 'none' }}
+                    >
+                      <option value="">Select...</option>
+                      {availableColumns.map(col => (
+                        <option key={col} value={col}>{col}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Series Management for Multi-Series Charts */}
+                  {isMultiSeriesChart && (
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="block text-sm font-medium text-gray-700">
+                          Series ({series.length})
+                        </label>
+                        <button
+                          onClick={handleAddSeries}
+                          className="flex items-center gap-1 px-3 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700"
+                          style={{ outline: 'none' }}
+                        >
+                          <Plus className="w-3 h-3" />
+                          Add Series
+                        </button>
+                      </div>
+
+                      <div className="space-y-2">
+                        {series.map((s, idx) => (
+                          <div
+                            key={s.id}
+                            className="flex items-center gap-2 p-3 border border-gray-200 rounded bg-gray-50"
+                          >
+                            <div
+                              className="w-4 h-4 rounded"
+                              style={{ backgroundColor: s.color }}
+                            />
+                            <div className="flex-1">
+                              <div className="text-sm font-medium text-gray-900">{s.label}</div>
+                              <div className="text-xs text-gray-500">
+                                {s.type} • {s.yAxis} Y-Axis • {s.measure}
+                                {s.measureCol && ` of ${s.measureCol}`}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => handleEditSeries(s)}
+                              className="p-1 hover:bg-gray-200 rounded"
+                              style={{ outline: 'none' }}
+                            >
+                              <EditIcon className="w-4 h-4 text-gray-600" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteSeries(s.id)}
+                              className="p-1 hover:bg-red-100 rounded"
+                              style={{ outline: 'none' }}
+                            >
+                              <Trash2 className="w-4 h-4 text-red-600" />
+                            </button>
+                          </div>
+                        ))}
+
+                        {series.length === 0 && (
+                          <div className="text-center py-4 text-sm text-gray-500">
+                            No series added. Click "Add Series" to start.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Single Series Config (for non-multi-series charts) */}
+                  {!isMultiSeriesChart && (
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Measure</label>
+                        <select
+                          value={measure}
+                          onChange={(e) => setMeasure(e.target.value as AggregateMethod)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                          style={{ outline: 'none' }}
+                        >
+                          <option value="count">Count</option>
+                          <option value="sum">Sum</option>
+                          <option value="avg">Average</option>
+                        </select>
+                      </div>
+
+                      {(measure === 'sum' || measure === 'avg') && (
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Column</label>
+                          <select
+                            value={measureCol}
+                            onChange={(e) => setMeasureCol(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                            style={{ outline: 'none' }}
+                          >
+                            <option value="">Select...</option>
+                            {availableColumns.map(col => (
+                              <option key={col} value={col}>{col}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Sort Options */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Sort By</label>
+                    <select
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value as SortOrder)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                      style={{ outline: 'none' }}
+                    >
+                      <option value="value-desc">Value (High to Low)</option>
+                      <option value="value-asc">Value (Low to High)</option>
+                      <option value="name-asc">Name (A-Z)</option>
+                      <option value="name-desc">Name (Z-A)</option>
+                      <option value="original">Original Order (for Dates)</option>
+                    </select>
+                  </div>
+
+                  {/* Bar Orientation */}
+                  {(type === 'bar' || isMultiSeriesChart) && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Bar Orientation</label>
+                      <div className="flex gap-4">
+                        <label className="flex items-center">
+                          <input
+                            type="radio"
+                            name="orientation"
+                            value="vertical"
+                            checked={barOrientation === 'vertical'}
+                            onChange={(e) => setBarOrientation('vertical')}
+                            className="mr-2"
+                            style={{ outline: 'none' }}
+                          />
+                          <span className="text-sm">Vertical</span>
+                        </label>
+                        <label className="flex items-center">
+                          <input
+                            type="radio"
+                            name="orientation"
+                            value="horizontal"
+                            checked={barOrientation === 'horizontal'}
+                            onChange={(e) => setBarOrientation('horizontal')}
+                            className="mr-2"
+                            style={{ outline: 'none' }}
+                          />
+                          <span className="text-sm">Horizontal</span>
+                        </label>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Category Filter */}
+                  {allCategories.length > 0 && (
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="block text-sm font-medium text-gray-700">
+                          Categories ({categoryFilter.length > 0 ? categoryFilter.length : allCategories.length} of {allCategories.length})
+                        </label>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={handleSelectAllCategories}
+                            className="text-xs text-blue-600 hover:text-blue-800"
+                            style={{ outline: 'none' }}
+                          >
+                            Select All
+                          </button>
+                          <button
+                            onClick={handleClearAllCategories}
+                            className="text-xs text-gray-600 hover:text-gray-800"
+                            style={{ outline: 'none' }}
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      </div>
+
+                      {allCategories.length > 5 && (
+                        <div className="mb-2">
+                          <div className="relative">
+                            <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
+                            <input
+                              type="text"
+                              value={categorySearch}
+                              onChange={(e) => setCategorySearch(e.target.value)}
+                              placeholder="Search categories..."
+                              className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded text-sm"
+                              style={{ outline: 'none' }}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="border border-gray-200 rounded p-3 max-h-48 overflow-y-auto bg-gray-50">
+                        {filteredCategories.map((cat, idx) => (
+                          <label
+                            key={idx}
+                            className="flex items-center py-1.5 px-2 hover:bg-gray-100 rounded cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={categoryFilter.length === 0 || categoryFilter.includes(cat)}
+                              onChange={() => handleCategoryToggle(cat)}
+                              className="mr-2"
+                              style={{ outline: 'none' }}
+                            />
+                            <span className="text-sm text-gray-900">{cat}</span>
+                          </label>
+                        ))}
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {categoryFilter.length === 0 ? 'All categories shown' : `${categoryFilter.length} selected`}
+                      </p>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Widget Width</label>
+                    <select
+                      value={width}
+                      onChange={(e) => setWidth(e.target.value as any)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                      style={{ outline: 'none' }}
+                    >
+                      <option value="half">Half (50%)</option>
+                      <option value="full">Full (100%)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Widget Title</label>
+                    <input
+                      type="text"
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value)}
+                      placeholder="Enter widget title"
+                      className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                      style={{ outline: 'none' }}
+                    />
+                  </div>
                 </div>
               )}
-
 
               {activeTab === 'customize' && (
                 <div className="space-y-2">
