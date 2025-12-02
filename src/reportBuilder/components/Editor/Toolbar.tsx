@@ -26,6 +26,7 @@ import {
 export const Toolbar: React.FC = () => {
   const { undo, redo, presentation, loadPresentation } = useSlideStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   const handleImportPPTX = () => {
     fileInputRef.current?.click();
@@ -121,14 +122,134 @@ export const Toolbar: React.FC = () => {
     });
   };
 
+  const handleAddImage = () => {
+    imageInputRef.current?.click();
+  };
+
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const src = event.target?.result as string;
+      if (src) {
+        useSlideStore.getState().addElement({
+          type: 'image',
+          left: 100,
+          top: 100,
+          width: 300,
+          height: 200,
+          rotate: 0,
+          src,
+          fixedRatio: true,
+        });
+      }
+    };
+    reader.readAsDataURL(file);
+
+    // Reset input
+    if (imageInputRef.current) {
+      imageInputRef.current.value = '';
+    }
+  };
+
+  const handleAddLine = () => {
+    useSlideStore.getState().addElement({
+      type: 'line',
+      left: 200,
+      top: 200,
+      width: 2,
+      start: [0, 0],
+      end: [200, 0],
+      color: '#000000',
+      style: 'solid',
+      points: ['', 'arrow'],
+    });
+  };
+
+  const handleAddChart = () => {
+    useSlideStore.getState().addElement({
+      type: 'chart',
+      left: 150,
+      top: 150,
+      width: 400,
+      height: 300,
+      rotate: 0,
+      chartType: 'bar',
+      data: {
+        labels: ['A', 'B', 'C', 'D'],
+        legends: ['Series 1'],
+        series: [[10, 20, 30, 40]],
+      },
+      options: {},
+      fill: '#3B82F6',
+    });
+  };
+
+  const handleAddVideo = () => {
+    const src = prompt('Enter video URL:');
+    if (src) {
+      useSlideStore.getState().addElement({
+        type: 'video',
+        left: 150,
+        top: 150,
+        width: 400,
+        height: 225,
+        rotate: 0,
+        src,
+      });
+    }
+  };
+
+  const handleAddAudio = () => {
+    const src = prompt('Enter audio URL:');
+    if (src) {
+      useSlideStore.getState().addElement({
+        type: 'audio',
+        left: 300,
+        top: 300,
+        width: 60,
+        height: 60,
+        rotate: 0,
+        src,
+        color: '#3B82F6',
+      });
+    }
+  };
+
+  const handleSave = () => {
+    if (!presentation) {
+      alert('No presentation to save');
+      return;
+    }
+
+    try {
+      // Save to localStorage
+      localStorage.setItem('pptist-presentation', JSON.stringify(presentation));
+      console.log('Presentation saved to localStorage');
+      alert('Presentation saved successfully!');
+    } catch (error) {
+      console.error('Save error:', error);
+      alert('Failed to save presentation. See console for details.');
+    }
+  };
+
   return (
     <div className="h-14 bg-white border-b border-gray-200 flex items-center px-4 gap-2">
-      {/* Hidden file input */}
+      {/* Hidden file inputs */}
       <input
         ref={fileInputRef}
         type="file"
         accept=".pptx"
         onChange={handleFileChange}
+        className="hidden"
+      />
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleImageChange}
         className="hidden"
       />
 
@@ -142,6 +263,7 @@ export const Toolbar: React.FC = () => {
           <Upload size={18} />
         </button>
         <button
+          onClick={handleSave}
           className="p-2 rounded hover:bg-gray-100 text-gray-600"
           title="Save"
         >
@@ -184,6 +306,7 @@ export const Toolbar: React.FC = () => {
           <Type size={18} />
         </button>
         <button
+          onClick={handleAddImage}
           className="p-2 rounded hover:bg-gray-100 text-gray-600"
           title="Add Image"
         >
@@ -197,12 +320,14 @@ export const Toolbar: React.FC = () => {
           <Square size={18} />
         </button>
         <button
+          onClick={handleAddLine}
           className="p-2 rounded hover:bg-gray-100 text-gray-600"
           title="Add Line"
         >
           <Minus size={18} />
         </button>
         <button
+          onClick={handleAddChart}
           className="p-2 rounded hover:bg-gray-100 text-gray-600"
           title="Add Chart"
         >
@@ -216,12 +341,14 @@ export const Toolbar: React.FC = () => {
           <Table size={18} />
         </button>
         <button
+          onClick={handleAddVideo}
           className="p-2 rounded hover:bg-gray-100 text-gray-600"
           title="Add Video"
         >
           <Video size={18} />
         </button>
         <button
+          onClick={handleAddAudio}
           className="p-2 rounded hover:bg-gray-100 text-gray-600"
           title="Add Audio"
         >

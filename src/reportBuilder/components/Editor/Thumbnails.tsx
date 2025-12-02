@@ -6,6 +6,7 @@
 import React from 'react';
 import { useSlideStore } from '../../store/useSlideStore';
 import { Plus, Copy, Trash2 } from 'lucide-react';
+import { ElementRenderer } from '../Elements';
 
 export const Thumbnails: React.FC = () => {
   const {
@@ -56,9 +57,57 @@ export const Thumbnails: React.FC = () => {
               </div>
 
               {/* Slide Preview */}
-              <div className="aspect-video bg-white rounded overflow-hidden">
-                <div className="w-full h-full flex items-center justify-center text-xs text-gray-400">
-                  Preview
+              <div className="aspect-video bg-white rounded overflow-hidden relative">
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div
+                    className="relative bg-white"
+                    style={{
+                      width: presentation.width,
+                      height: presentation.height,
+                      transform: `scale(${200 / presentation.width})`,
+                      transformOrigin: 'center center',
+                    }}
+                  >
+                    {/* Background */}
+                    <div
+                      className="absolute inset-0"
+                      style={{
+                        backgroundColor: slide.background?.type === 'solid' ? slide.background.color : '#FFFFFF',
+                        backgroundImage: (() => {
+                          if (slide.background?.type === 'image' && slide.background.image) {
+                            return `url(${slide.background.image.src})`;
+                          }
+                          if (slide.background?.type === 'gradient' && slide.background.gradient) {
+                            const { gradient } = slide.background;
+                            const colors = gradient.colors.map(c => `${c.color} ${c.pos}%`).join(', ');
+                            return gradient.type === 'linear'
+                              ? `linear-gradient(${gradient.rotate}deg, ${colors})`
+                              : `radial-gradient(circle, ${colors})`;
+                          }
+                          return undefined;
+                        })(),
+                        backgroundSize: slide.background?.type === 'image' && slide.background.image
+                          ? slide.background.image.size
+                          : undefined,
+                        backgroundPosition: 'center',
+                        backgroundRepeat: slide.background?.type === 'image' && slide.background.image && slide.background.image.size === 'repeat'
+                          ? 'repeat'
+                          : 'no-repeat',
+                      }}
+                    />
+
+                    {/* Elements */}
+                    <div className="relative w-full h-full pointer-events-none">
+                      {slide.elements.map((element) => (
+                        <ElementRenderer
+                          key={element.id}
+                          element={element}
+                          isSelected={false}
+                          onClick={() => {}}
+                        />
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
 

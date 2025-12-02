@@ -151,13 +151,13 @@ export async function importPPTX(file: File): Promise<Presentation> {
 
         console.log('PPTX Parsed:', json);
 
-        // pt to px conversion for elements (PPTist uses 96/72)
+        // pt to px conversion (PPTist uses 96/72)
         const ratio = 96 / 72;
 
-        // Canvas size - json.size is already in correct units (px)
-        // PPTist doesn't multiply canvas size by ratio, only elements!
-        const width = json.size.width;
-        const height = json.size.height;
+        // Canvas size - json.size is in POINTS, must convert to pixels!
+        // PPTist does: slidesStore.setViewportSize(width * ratio)
+        const width = json.size.width * ratio;
+        const height = json.size.height * ratio;
 
         const slides: Slide[] = [];
 
@@ -224,7 +224,7 @@ export async function importPPTX(file: File): Promise<Presentation> {
                 defaultFontName: 'Arial',
                 defaultColor: '#000000',
                 content: convertFontSizePtToPx(el.content, ratio),
-                lineHeight: 1.2,
+                lineHeight: 1,
               };
 
               if (el.fill?.type === 'color') {
