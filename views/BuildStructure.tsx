@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, Save, Play, Loader2, Table2, Layers, ChevronUp, ChevronDown, X } from 'lucide-react';
+import { Plus, Save, Play, Loader2, Table2, Layers, ChevronUp, ChevronDown, X, ArrowRight } from 'lucide-react';
 import {
   BuildStructureConfig,
   ColumnConfig,
@@ -7,6 +7,7 @@ import {
   Project,
   RawRow,
   StructureRule,
+  TransformationRule,
   TransformMethod,
 } from '../types';
 import { ensureDataSources, getDataSourcesByKind, addDerivedDataSource } from '../utils/dataSources';
@@ -15,6 +16,13 @@ import { inferColumns } from '../utils/excel';
 import { analyzeSourceColumn, applyTransformation, getAllUniqueValues } from '../utils/transform';
 import { useToast } from '../components/ToastProvider';
 import EmptyState from '../components/EmptyState';
+
+const safeRender = (val: any) => {
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'boolean') return val ? 'TRUE' : 'FALSE';
+  if (typeof val === 'object') return JSON.stringify(val);
+  return String(val);
+};
 
 interface BuildStructureProps {
   project: Project;
@@ -739,12 +747,12 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
                           }}
                           className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                         >
-                          <option value="copy">Direct copy</option>
-                          <option value="array_count">Array count</option>
-                          <option value="array_join">Array join</option>
-                          <option value="array_extract">Array extract</option>
-                          <option value="array_includes">Array includes</option>
-                          <option value="date_extract">Date extract</option>
+                          <option value="copy">Direct Copy</option>
+                          <option value="array_count">Count Items</option>
+                          <option value="array_extract">Extract item by index</option>
+                          <option value="array_join">Join to String</option>
+                          <option value="array_includes">Check presence (Boolean)</option>
+                          <option value="date_extract">Extract Date/Time</option>
                           <option value="date_format">Date format</option>
                         </select>
                       </div>
@@ -836,66 +844,168 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
                       </div>
                     )}
 
-                    <div className="border border-gray-200 rounded-lg bg-white mt-4 p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm font-semibold text-gray-800">Value mapping</span>
-                        <button
-                          onClick={() => updateDraft(draft.sourceId, (curr) => ({ ...curr, valueMap: {} }))}
-                          className="text-xs text-gray-500 hover:text-red-500"
-                        >
-                          Clear
-                        </button>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+                      <div className="border border-gray-200 rounded-lg bg-white p-4 shadow-sm">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm font-semibold text-gray-800 flex items-center space-x-2">
+                            <Play className="w-4 h-4 text-blue-500" />
+                            <span>Live preview</span>
+                          </span>
+                          <span className="text-xs text-gray-400">Sample values</span>
+                        </div>
+                        <div className="space-y-2 max-h-40 overflow-y-auto">
+                          {draft.analysis?.sampleValues.slice(0, 5).map((val, i) => {
+                            const tempRule: TransformationRule = {
+                              id: 'temp',
+                              targetName: 'Preview',
+                              sourceKey: draft.sourceKey,
+                              method: draft.method,
+                              params: draft.params,
+                              valueMap: Object.keys(draft.valueMap).length ? draft.valueMap : undefined,
+                            };
+                            const mockRow: RawRow = { [draft.sourceKey]: val } as RawRow;
+                            const result = applyTransformation([mockRow], [tempRule])[0]?.Preview;
+
+                            return (
+                              <div key={`${draft.sourceId}-${i}`} className="text-sm grid grid-cols-2 gap-3 border-b border-gray-100 pb-2 last:border-0 last:pb-0">
+                                <div className="text-gray-500 truncate" title={String(val)}>
+                                  {safeRender(val)}
+                                </div>
+                                <div className="font-medium text-gray-900 truncate flex items-center" title={safeRender(result)}>
+                                  <ArrowRight className="w-3 h-3 mr-2 text-blue-400" />
+                                  {safeRender(result)}
+                                </div>
+                              </div>
+                            );
+                          })}
+                          {!draft.analysis?.sampleValues?.length && (
+                            <p className="text-xs text-gray-400">No sample values available for this source.</p>
+                          )}
+                        </div>
                       </div>
-                      <div className="grid grid-cols-5 gap-2 items-start">
-                        <input
-                          value={draft.manualKey}
-                          onChange={(e) => updateDraft(draft.sourceId, (curr) => ({ ...curr, manualKey: e.target.value }))}
-                          className="col-span-2 border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                          placeholder="Original value"
-                        />
-                        <input
-                          value={draft.manualValue}
-                          onChange={(e) => updateDraft(draft.sourceId, (curr) => ({ ...curr, manualValue: e.target.value }))}
-                          className="col-span-2 border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                          placeholder="Mapped to"
-                        />
-                        <button
-                          onClick={() => {
-                            if (draft.manualKey && draft.manualValue) {
-                              updateDraft(draft.sourceId, (curr) => ({
-                                ...curr,
-                                valueMap: { ...curr.valueMap, [draft.manualKey]: draft.manualValue },
-                                manualKey: '',
-                                manualValue: '',
-                              }));
-                            }
-                          }}
-                          className="px-3 py-2 bg-gray-900 text-white text-sm rounded-lg"
-                        >
-                          Add
-                        </button>
-                      </div>
-                      <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-gray-700 max-h-24 overflow-y-auto">
-                        {Object.entries(draft.valueMap).map(([k, v]) => (
-                          <div key={k} className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded border">
-                            <span className="truncate">{k}</span>
-                            <span className="text-gray-400">→</span>
-                            <span className="font-semibold truncate">{v}</span>
+
+                      <div className="border border-gray-200 rounded-lg bg-white shadow-sm overflow-hidden">
+                        <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+                          <div>
+                            <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Map values</h4>
+                            <p className="text-[10px] text-gray-400">Found {draft.uniqueValues.length} values (scanning top 5000)</p>
                           </div>
-                        ))}
-                        {Object.keys(draft.valueMap).length === 0 &&
-                          draft.uniqueValues.slice(0, 6).map((val) => (
+                          <button
+                            onClick={() => updateDraft(draft.sourceId, (curr) => ({ ...curr, valueMap: {} }))}
+                            className="text-xs text-gray-500 hover:text-red-500"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                        <div className="max-h-48 overflow-y-auto">
+                          <table className="w-full text-sm">
+                            <thead className="bg-gray-50 text-gray-500 text-xs sticky top-0">
+                              <tr>
+                                <th className="px-4 py-2 text-left font-medium">Original found</th>
+                                <th className="px-4 py-2 text-left font-medium">Map to</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {draft.uniqueValues.map((val) => (
+                                <tr key={`${draft.sourceId}-${val}`}>
+                                  <td className="px-4 py-2 text-gray-600 font-mono text-xs truncate max-w-[120px]" title={val}>
+                                    {val}
+                                  </td>
+                                  <td className="px-4 py-2">
+                                    <input
+                                      className="w-full px-2 py-1 border border-gray-200 rounded text-xs focus:border-blue-500 outline-none"
+                                      placeholder={val}
+                                      value={draft.valueMap[val] || ''}
+                                      onChange={(e) =>
+                                        updateDraft(draft.sourceId, (curr) => ({
+                                          ...curr,
+                                          valueMap: { ...curr.valueMap, [val]: e.target.value },
+                                        }))
+                                      }
+                                    />
+                                  </td>
+                                </tr>
+                              ))}
+                              {Object.keys(draft.valueMap)
+                                .filter((k) => !draft.uniqueValues.includes(k))
+                                .map((k) => (
+                                  <tr key={`${draft.sourceId}-custom-${k}`}>
+                                    <td className="px-4 py-2 text-gray-600 font-mono text-xs truncate max-w-[120px]" title={k}>
+                                      {k} (Custom)
+                                    </td>
+                                    <td className="px-4 py-2">
+                                      <div className="flex items-center">
+                                        <input
+                                          className="w-full px-2 py-1 border border-gray-200 rounded text-xs focus:border-blue-500 outline-none"
+                                          value={draft.valueMap[k]}
+                                          onChange={(e) =>
+                                            updateDraft(draft.sourceId, (curr) => ({
+                                              ...curr,
+                                              valueMap: { ...curr.valueMap, [k]: e.target.value },
+                                            }))
+                                          }
+                                        />
+                                        <button
+                                          onClick={() =>
+                                            updateDraft(draft.sourceId, (curr) => {
+                                              const nextMap = { ...curr.valueMap };
+                                              delete nextMap[k];
+                                              return { ...curr, valueMap: nextMap };
+                                            })
+                                          }
+                                          className="ml-2 text-gray-400 hover:text-red-500"
+                                        >
+                                          <X className="w-3 h-3" />
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
+                              {draft.uniqueValues.length === 0 && Object.keys(draft.valueMap).length === 0 && (
+                                <tr>
+                                  <td className="px-4 py-3 text-xs text-gray-400" colSpan={2}>
+                                    No mapped values yet. Add mappings below.
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        <div className="px-4 py-3 bg-gray-50 border-t border-gray-200">
+                          <div className="text-[10px] text-gray-500 mb-2 font-medium">Add custom map (if value not found)</div>
+                          <div className="flex space-x-2">
+                            <input
+                              className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-xs outline-none"
+                              placeholder="Original value"
+                              value={draft.manualKey}
+                              onChange={(e) => updateDraft(draft.sourceId, (curr) => ({ ...curr, manualKey: e.target.value }))}
+                            />
+                            <ArrowRight className="w-4 h-4 text-gray-400 self-center" />
+                            <input
+                              className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-xs outline-none"
+                              placeholder="New value"
+                              value={draft.manualValue}
+                              onChange={(e) => updateDraft(draft.sourceId, (curr) => ({ ...curr, manualValue: e.target.value }))}
+                            />
                             <button
-                              key={val}
-                              onClick={() => updateDraft(draft.sourceId, (curr) => ({
-                                ...curr,
-                                valueMap: { ...curr.valueMap, [val]: val },
-                              }))}
-                              className="px-3 py-2 bg-white rounded border text-left hover:border-blue-400"
+                              onClick={() => {
+                                if (draft.manualKey && draft.manualValue) {
+                                  updateDraft(draft.sourceId, (curr) => ({
+                                    ...curr,
+                                    valueMap: { ...curr.valueMap, [draft.manualKey]: draft.manualValue },
+                                    manualKey: '',
+                                    manualValue: '',
+                                  }));
+                                }
+                              }}
+                              disabled={!draft.manualKey || !draft.manualValue}
+                              className="px-3 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-xs font-medium disabled:opacity-50"
                             >
-                              {val}
+                              <Plus className="w-3 h-3" />
                             </button>
-                          ))}
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
