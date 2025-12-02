@@ -24,7 +24,15 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, onBackToLandi
           { id: ProjectTab.PREPARATION, label: 'Preparation Data' },
         ],
       },
-      { id: ProjectTab.PREP, label: 'Clean & Prep', icon: FileSpreadsheet },
+      {
+        id: ProjectTab.PREP_TOOLS,
+        label: 'Preparation Tools',
+        icon: FileSpreadsheet,
+        children: [
+          { id: ProjectTab.CLEANSING, label: 'Cleansing Data' },
+          { id: ProjectTab.BUILD_STRUCTURE, label: 'Build Structure' },
+        ],
+      },
       { id: ProjectTab.VISUALIZE, label: 'Analytics', icon: BarChart3 },
       { id: ProjectTab.AI_AGENT, label: 'AI Agent', icon: Bot },
       { id: ProjectTab.REPORT, label: 'Report Builder', icon: FileOutput },

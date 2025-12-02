@@ -3,7 +3,9 @@ import React, { useState, useEffect } from 'react';
 import Landing from './views/Landing';
 import Sidebar from './components/Sidebar';
 import DataIngest from './views/DataIngest';
-import DataPrep from './views/DataPrep';
+import PrepLanding from './views/PrepLanding';
+import CleansingData from './views/CleansingData';
+import BuildStructure from './views/BuildStructure';
 import Analytics from './views/Analytics';
 import ReportBuilder from './views/ReportBuilder';
 import AiAgent from './views/AiAgent';
@@ -70,7 +72,9 @@ const App: React.FC = () => {
                       {activeTab === ProjectTab.UPLOAD && 'Management Data'}
                       {activeTab === ProjectTab.INGESTION && 'Ingestion Data'}
                       {activeTab === ProjectTab.PREPARATION && 'Preparation Data'}
-                      {activeTab === ProjectTab.PREP && 'Clean & Prep'}
+                      {activeTab === ProjectTab.PREP_TOOLS && 'Preparation Tools'}
+                      {activeTab === ProjectTab.CLEANSING && 'Cleansing Data'}
+                      {activeTab === ProjectTab.BUILD_STRUCTURE && 'Build Structure'}
                       {activeTab === ProjectTab.VISUALIZE && 'Analytics'}
                       {activeTab === ProjectTab.AI_AGENT && 'AI Enrichment'}
                       {activeTab === ProjectTab.REPORT && 'Presentation Builder'}
@@ -90,7 +94,6 @@ const App: React.FC = () => {
                         project={currentProject}
                         onUpdateProject={updateProject}
                         kind="ingestion"
-                        onNext={() => handleTabChange(ProjectTab.PREP)}
                       />
                     </div>
                   )}
@@ -99,11 +102,12 @@ const App: React.FC = () => {
                       <DataIngest project={currentProject} onUpdateProject={updateProject} kind="prepared" />
                     </div>
                   )}
-                  {activeTab === ProjectTab.PREP && (
-                      <DataPrep 
-                          project={currentProject}
-                          onUpdateProject={updateProject}
-                      />
+                  {activeTab === ProjectTab.PREP_TOOLS && <PrepLanding />}
+                  {activeTab === ProjectTab.CLEANSING && (
+                    <CleansingData project={currentProject} onUpdateProject={updateProject} />
+                  )}
+                  {activeTab === ProjectTab.BUILD_STRUCTURE && (
+                    <BuildStructure project={currentProject} onUpdateProject={updateProject} />
                   )}
                   {activeTab === ProjectTab.VISUALIZE && (
                       <Analytics project={currentProject} onUpdateProject={updateProject} />

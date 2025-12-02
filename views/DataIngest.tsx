@@ -28,8 +28,8 @@ const titles: Record<DataSourceKind, { title: string; subtitle: string; empty: s
   },
   prepared: {
     title: 'Preparation Data',
-    subtitle: 'Data saved from features like Clean & Prep.',
-    empty: 'No prepared tables yet. Save from Clean & Prep to populate this list.',
+    subtitle: 'Data saved from Preparation Tools.',
+    empty: 'No prepared tables yet. Save from Preparation Tools to populate this list.',
   },
 };
 
