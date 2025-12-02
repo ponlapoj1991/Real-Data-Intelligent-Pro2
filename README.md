@@ -8,12 +8,14 @@ A powerful Social Listening Data Intelligence Platform built with React, TypeScr
 
 ## Features
 
-- 📊 **Data Ingestion**: Upload Excel/CSV or connect to Google Sheets
-- 🧹 **Data Cleaning**: Transform and prepare your data with smart tools
-- 📈 **Analytics Dashboard**: Create interactive charts with AI assistance
-- 🤖 **AI Agent**: Chat with your data and perform intelligent transformations
-- 📄 **Report Builder**: Drag-and-drop presentation builder with PPTX export
-- ⚙️ **Multi-AI Support**: Works with Google Gemini, OpenAI, and Claude
+- 📁 **Management Data**: Manage multiple project tables with uploads, append/replace flows, per-table naming, status badges, delete controls, and CSV/Excel downloads for every saved preparation.
+- 🧰 **Preparation Tools**: Parent workspace with two focused tools:
+  - **Cleansing Data**: Create configs against any managed table, preview/edit column types, run transforms, and save cleaned outputs back to Preparation Data.
+  - **Build Structure**: Map and merge columns from multiple sources, configure extraction logic (copy, count, index, join, presence, date parts), add value mappings with live previews, reorder target columns, stack results per-file, and save structured tables to Preparation Data with custom names.
+- 📈 **Analytics**: Build charts with immediate config after selecting a chart type, preserved sorting/colors between preview and saved views, and layered controls for titles, axes, series, and palettes.
+- 📄 **Report Builder**: PPTist-inspired inspector/asset panels, layer manager (lock/hide/rename/duplicate), style clipboard, slide backgrounds, grids/zoom, and drag-and-drop authoring with PPTX export.
+- 🤖 **AI Agent**: Chat with your data and perform intelligent transformations.
+- ⚙️ **Multi-AI Support**: Works with Google Gemini, OpenAI, and Claude.
 
 ## Branch alignment
 
