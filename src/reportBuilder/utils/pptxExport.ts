@@ -106,10 +106,12 @@ async function addSlide(pptx: any, slide: Slide, presentation: Presentation) {
     } else if (slide.background.type === 'image' && slide.background.image) {
       pptxSlide.background = { path: slide.background.image.src };
     } else if (slide.background.type === 'gradient' && slide.background.gradient) {
-      // PptxGenJS gradient support is limited
+      // PptxGenJS gradient support - use dominant color (first color with highest position)
       const { gradient } = slide.background;
       if (gradient.colors.length > 0) {
-        pptxSlide.background = { color: gradient.colors[0].color.replace('#', '') };
+        // Sort by position and use color at 50% or closest
+        const sortedColors = [...gradient.colors].sort((a, b) => Math.abs(a.pos - 50) - Math.abs(b.pos - 50));
+        pptxSlide.background = { color: sortedColors[0].color.replace('#', '') };
       }
     }
   }
@@ -291,7 +293,7 @@ function convertImageElement(
   element: PPTImageElement,
   baseOptions: any
 ): { type: string; options: any } {
-  const options = {
+  const options: any = {
     ...baseOptions,
     path: element.src,
     sizing: {
@@ -304,7 +306,17 @@ function convertImageElement(
       vertical: element.flipV || false,
     },
     rounding: element.radius ? true : false,
+    transparency: element.opacity !== undefined ? 100 - element.opacity : 0,
   };
+
+  // Add outline if present
+  if (element.outline) {
+    options.line = {
+      color: element.outline.color?.replace('#', ''),
+      width: element.outline.width / 96,
+      dashType: element.outline.style === 'dashed' ? 'dash' : element.outline.style === 'dotted' ? 'dot' : undefined,
+    };
+  }
 
   return { type: 'image', options };
 }
@@ -352,32 +364,112 @@ function convertShapeElement(
     }
   }
 
-  const options = {
+  const options: any = {
     ...baseOptions,
     shape,
-    fill: element.fill ? { color: element.fill.replace('#', '') } : undefined,
     line: element.outline
       ? {
           color: element.outline.color?.replace('#', ''),
           width: element.outline.width / 96,
+          dashType: element.outline.style === 'dashed' ? 'dash' : element.outline.style === 'dotted' ? 'dot' : undefined,
         }
       : undefined,
     opacity: element.opacity !== undefined ? element.opacity / 100 : undefined,
   };
 
+  // Handle fills: gradient, pattern, or solid
+  if (element.gradient) {
+    // PptxGenJS gradient support
+    const { gradient } = element;
+    if (gradient.type === 'linear') {
+      // Linear gradient - convert to PptxGenJS format
+      const stops = gradient.colors.map(c => ({
+        position: c.pos,
+        color: c.color.replace('#', ''),
+      }));
+
+      // PptxGenJS uses angle in degrees (0-360)
+      options.fill = {
+        type: 'solid',
+        color: stops[0].color, // Fallback to first color
+        transparency: element.opacity !== undefined ? 100 - element.opacity : 0,
+      };
+
+      // Note: PptxGenJS has limited gradient support, using first color as fallback
+    } else {
+      // Radial gradient - use center color
+      const centerColor = gradient.colors.find(c => c.pos <= 50) || gradient.colors[0];
+      options.fill = {
+        type: 'solid',
+        color: centerColor.color.replace('#', ''),
+        transparency: element.opacity !== undefined ? 100 - element.opacity : 0,
+      };
+    }
+  } else if (element.pattern) {
+    // Pattern fill (image)
+    options.fill = {
+      type: 'solid',
+      color: 'FFFFFF', // Fallback white background
+    };
+    // Note: PptxGenJS has limited pattern support
+  } else if (element.fill) {
+    // Solid fill
+    options.fill = {
+      type: 'solid',
+      color: element.fill.replace('#', ''),
+      transparency: element.opacity !== undefined ? 100 - element.opacity : 0,
+    };
+  }
+
   // Add text if present
   if (element.text) {
     const parser = new DOMParser();
     const doc = parser.parseFromString(element.text.content, 'text/html');
-    const text = doc.body.textContent || element.text.content.replace(/<[^>]*>/g, '');
 
-    options.text = [{ text, options: {
-      fontSize: 14,
-      fontFace: element.text.defaultFontName,
-      color: element.text.defaultColor?.replace('#', ''),
-      align: element.text.align || 'center',
-      valign: element.text.align || 'middle',
-    }}];
+    // Extract formatted text
+    let text: any[] = [];
+    const spans = doc.querySelectorAll('span');
+
+    if (spans.length > 0) {
+      spans.forEach(span => {
+        const style = span.style;
+        const textContent = span.textContent || '';
+
+        let fontSize = 14;
+        if (style.fontSize) {
+          const match = style.fontSize.match(/(\d+)/);
+          if (match) fontSize = parseInt(match[1]);
+        }
+
+        text.push({
+          text: textContent,
+          options: {
+            fontSize,
+            fontFace: (style.fontFamily || element.text?.defaultFontName || 'Arial').replace(/['"]/g, ''),
+            color: (style.color || element.text?.defaultColor || '#000000').replace('#', ''),
+            bold: style.fontWeight === 'bold',
+            italic: style.fontStyle === 'italic',
+            underline: style.textDecoration?.includes('underline'),
+            align: element.text?.align === 'top' ? 'left' : element.text?.align === 'bottom' ? 'right' : 'center',
+            valign: element.text?.align || 'middle',
+          }
+        });
+      });
+    } else {
+      const textContent = doc.body.textContent || element.text.content.replace(/<[^>]*>/g, '');
+      text = [{
+        text: textContent,
+        options: {
+          fontSize: 14,
+          fontFace: element.text.defaultFontName,
+          color: element.text.defaultColor?.replace('#', ''),
+          align: element.text.align === 'top' ? 'left' : element.text.align === 'bottom' ? 'right' : 'center',
+          valign: element.text.align || 'middle',
+        }
+      }];
+    }
+
+    options.text = text;
   }
 
   return { type: 'shape', options };
@@ -410,7 +502,18 @@ function convertTableElement(
         cellOptions.color = cell.style.color?.replace('#', '');
         cellOptions.fill = cell.style.backcolor?.replace('#', '');
         cellOptions.fontSize = parseInt(cell.style.fontsize || '12');
-        cellOptions.align = cell.style.align;
+        cellOptions.fontFace = cell.style.fontname || 'Arial';
+        cellOptions.align = cell.style.align || 'left';
+        cellOptions.valign = 'middle';
+
+        // Add border per cell if needed
+        if (element.outline) {
+          cellOptions.border = {
+            type: element.outline.style || 'solid',
+            color: element.outline.color?.replace('#', ''),
+            pt: element.outline.width / 96,
+          };
+        }
       }
 
       pptxRow.push(cellOptions);
@@ -419,18 +522,21 @@ function convertTableElement(
     rows.push(pptxRow);
   });
 
-  const options = {
+  const options: any = {
     ...baseOptions,
     rows,
     colW: element.colWidths.map((w) => baseOptions.w * w),
-    border: element.outline
-      ? {
-          type: element.outline.style,
-          color: element.outline.color?.replace('#', ''),
-          pt: element.outline.width,
-        }
-      : undefined,
+    rowH: element.cellMinHeight ? [element.cellMinHeight / 96] : undefined,
   };
+
+  // Add default border if specified
+  if (element.outline) {
+    options.border = {
+      type: element.outline.style || 'solid',
+      color: element.outline.color?.replace('#', ''),
+      pt: element.outline.width / 96,
+    };
+  }
 
   return { type: 'table', options };
 }
