@@ -27,13 +27,17 @@ export const ElementRenderer: React.FC<ElementRendererProps> = ({
 }) => {
   const [isEditing, setIsEditing] = useState(false);
 
+  // Line elements don't have height/rotate
+  const height = 'height' in element ? element.height : undefined;
+  const rotate = 'rotate' in element ? element.rotate : 0;
+
   const commonStyle: React.CSSProperties = {
     position: 'absolute',
     left: element.left,
     top: element.top,
     width: element.width,
-    height: element.height,
-    transform: `rotate(${element.rotate}deg)`,
+    height,
+    transform: `rotate(${rotate}deg)`,
     cursor: element.lock ? 'default' : 'move',
     pointerEvents: element.lock ? 'none' : 'auto',
     border: isSelected ? '2px solid #2F88FF' : '1px solid transparent',

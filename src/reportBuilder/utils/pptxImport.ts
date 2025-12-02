@@ -151,10 +151,13 @@ export async function importPPTX(file: File): Promise<Presentation> {
 
         console.log('PPTX Parsed:', json);
 
-        // pt to px conversion (PPTist uses 96/72)
+        // pt to px conversion for elements (PPTist uses 96/72)
         const ratio = 96 / 72;
-        const width = json.size.width * ratio;
-        const height = json.size.height * ratio;
+
+        // Canvas size - json.size is already in correct units (px)
+        // PPTist doesn't multiply canvas size by ratio, only elements!
+        const width = json.size.width;
+        const height = json.size.height;
 
         const slides: Slide[] = [];
 
@@ -166,8 +169,10 @@ export async function importPPTX(file: File): Promise<Presentation> {
           if (type === 'image') {
             background = {
               type: 'image',
-              image: value.picBase64,
-              size: 'cover',
+              image: {
+                src: value.picBase64,
+                size: 'cover',
+              },
             };
           }
           else if (type === 'gradient') {

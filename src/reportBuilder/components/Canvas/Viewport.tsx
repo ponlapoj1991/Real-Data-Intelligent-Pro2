@@ -130,14 +130,21 @@ export const Viewport: React.FC<ViewportProps> = ({ width, height }) => {
           const element = currentSlide.elements.find((el) => el.id === elementId);
           if (!element || element.lock) return null;
 
+          // Line elements don't have height/rotate - skip TransformBox
+          if (element.type === 'line') return null;
+
+          // For elements with height/rotate
+          const height = 'height' in element ? element.height : 100;
+          const rotate = 'rotate' in element ? element.rotate : 0;
+
           return (
             <TransformBox
               key={`transform-${elementId}`}
               left={element.left}
               top={element.top}
               width={element.width}
-              height={element.height}
-              rotate={element.rotate}
+              height={height}
+              rotate={rotate}
               locked={element.lock}
               onTransform={(updates) => {
                 updateElement(elementId, updates);
