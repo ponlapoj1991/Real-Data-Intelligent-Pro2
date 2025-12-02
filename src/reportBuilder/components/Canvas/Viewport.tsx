@@ -9,6 +9,7 @@ import { GridLines } from './GridLines';
 import { AlignmentGuides } from './AlignmentGuides';
 import { TransformBox } from './TransformBox';
 import { ElementRenderer } from '../Elements';
+import { ContextMenu } from './ContextMenu';
 
 interface ViewportProps {
   width: number;
@@ -24,6 +25,7 @@ export const Viewport: React.FC<ViewportProps> = ({ width, height }) => {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [alignmentGuides, setAlignmentGuides] = useState<Guide[]>([]);
   const [temporaryTransforms, setTemporaryTransforms] = useState<Record<string, { left?: number; top?: number; width?: number; height?: number; rotate?: number }>>({});
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
   const {
     presentation,
@@ -34,6 +36,13 @@ export const Viewport: React.FC<ViewportProps> = ({ width, height }) => {
     selectElement,
     clearSelection,
     updateElement,
+    copyElements,
+    cutElements,
+    deleteElement,
+    groupElements,
+    ungroupElement,
+    bringToFront,
+    sendToBack,
   } = useSlideStore();
 
   const currentSlide = presentation?.slides.find(s => s.id === currentSlideId);
@@ -49,6 +58,13 @@ export const Viewport: React.FC<ViewportProps> = ({ width, height }) => {
     const isMulti = e.shiftKey || e.metaKey || e.ctrlKey;
     selectElement(elementId, isMulti);
   }, [selectElement]);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    if (selectedElementIds.length > 0) {
+      e.preventDefault();
+      setContextMenu({ x: e.clientX, y: e.clientY });
+    }
+  }, [selectedElementIds]);
 
   if (!currentSlide || !presentation) {
     return (
@@ -98,6 +114,7 @@ export const Viewport: React.FC<ViewportProps> = ({ width, height }) => {
         className="relative bg-white shadow-2xl"
         style={canvasStyle}
         onClick={handleCanvasClick}
+        onContextMenu={handleContextMenu}
       >
         {/* Background */}
         <div
@@ -196,6 +213,31 @@ export const Viewport: React.FC<ViewportProps> = ({ width, height }) => {
           height={height}
         />
       </div>
+
+      {/* Context Menu */}
+      {contextMenu && selectedElementIds.length > 0 && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          selectedCount={selectedElementIds.length}
+          isGroup={currentSlide?.elements.find(el => el.id === selectedElementIds[0])?.type === 'group'}
+          isLocked={currentSlide?.elements.find(el => el.id === selectedElementIds[0])?.lock || false}
+          onClose={() => setContextMenu(null)}
+          onCopy={() => copyElements()}
+          onCut={() => cutElements()}
+          onDelete={() => selectedElementIds.forEach(id => deleteElement(id))}
+          onLock={() => {
+            const element = currentSlide?.elements.find(el => el.id === selectedElementIds[0]);
+            if (element) {
+              updateElement(element.id, { lock: !element.lock });
+            }
+          }}
+          onGroup={() => groupElements(selectedElementIds)}
+          onUngroup={() => ungroupElement(selectedElementIds[0])}
+          onBringToFront={() => selectedElementIds.forEach(id => bringToFront(id))}
+          onSendToBack={() => selectedElementIds.forEach(id => sendToBack(id))}
+        />
+      )}
     </div>
   );
 };
