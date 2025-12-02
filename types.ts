@@ -64,6 +64,7 @@ export interface ColumnConfig {
   label?: string;
 }
 
+
 export type DataSourceKind = 'ingestion' | 'prepared';
 
 export interface DataSource {
@@ -94,6 +95,19 @@ export interface TransformationRule {
   method: TransformMethod;
   params?: any;         // e.g. { delimiter: ',', index: 0, keyword: 'Service', datePart: 'date' }
   valueMap?: Record<string, string>; // New: Map result values to new labels (e.g. 'isComment' -> 'Comment')
+}
+
+export interface StructureRule extends TransformationRule {
+  sourceId: string;
+}
+
+export interface BuildStructureConfig {
+  id: string;
+  name: string;
+  sourceIds: string[];
+  rules: StructureRule[];
+  createdAt: number;
+  updatedAt: number;
 }
 
 // --- Dashboard & Widget Types (Phase 2 & 3 & 4) ---
@@ -375,8 +389,10 @@ export interface Project {
 
   dataSources?: DataSource[]; // Multi-table support
   activeDataSourceId?: string; // Which table powers features
-  
+
   transformRules?: TransformationRule[];
+  buildStructureConfigs?: BuildStructureConfig[];
+  activeBuildConfigId?: string;
   dashboard?: DashboardWidget[]; // Saved Dashboard Config
   
   reportConfig?: ReportSlide[]; // Saved Report Builder Config
