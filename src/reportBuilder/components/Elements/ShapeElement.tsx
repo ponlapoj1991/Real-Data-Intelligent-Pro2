@@ -21,7 +21,7 @@ export const ShapeElement: React.FC<ShapeElementProps> = ({ element, isSelected 
   if (element.gradient) {
     fillId = `gradient-${element.id}`;
   } else if (element.pattern) {
-    fill = `url(${element.pattern})`;
+    fillId = `pattern-${element.id}`;
   }
 
   const svgStyle: React.CSSProperties = {
@@ -52,32 +52,54 @@ export const ShapeElement: React.FC<ShapeElementProps> = ({ element, isSelected 
         preserveAspectRatio={element.fixedRatio ? 'xMidYMid meet' : 'none'}
         style={svgStyle}
       >
-        {/* Gradient Definition */}
-        {element.gradient && (
+        {/* Definitions */}
+        {(element.gradient || element.pattern) && (
           <defs>
-            {element.gradient.type === 'linear' ? (
-              <linearGradient
+            {/* Gradient */}
+            {element.gradient && (
+              element.gradient.type === 'linear' ? (
+                <linearGradient
+                  id={fillId}
+                  gradientTransform={`rotate(${element.gradient.rotate})`}
+                >
+                  {element.gradient.colors.map((color, idx) => (
+                    <stop
+                      key={idx}
+                      offset={`${color.pos}%`}
+                      stopColor={color.color}
+                    />
+                  ))}
+                </linearGradient>
+              ) : (
+                <radialGradient id={fillId}>
+                  {element.gradient.colors.map((color, idx) => (
+                    <stop
+                      key={idx}
+                      offset={`${color.pos}%`}
+                      stopColor={color.color}
+                    />
+                  ))}
+                </radialGradient>
+              )
+            )}
+
+            {/* Pattern (Image Fill) */}
+            {element.pattern && (
+              <pattern
                 id={fillId}
-                gradientTransform={`rotate(${element.gradient.rotate})`}
+                patternUnits="objectBoundingBox"
+                width="1"
+                height="1"
               >
-                {element.gradient.colors.map((color, idx) => (
-                  <stop
-                    key={idx}
-                    offset={`${color.pos}%`}
-                    stopColor={color.color}
-                  />
-                ))}
-              </linearGradient>
-            ) : (
-              <radialGradient id={fillId}>
-                {element.gradient.colors.map((color, idx) => (
-                  <stop
-                    key={idx}
-                    offset={`${color.pos}%`}
-                    stopColor={color.color}
-                  />
-                ))}
-              </radialGradient>
+                <image
+                  href={element.pattern}
+                  x="0"
+                  y="0"
+                  width={viewBoxWidth}
+                  height={viewBoxHeight}
+                  preserveAspectRatio="xMidYMid slice"
+                />
+              </pattern>
             )}
           </defs>
         )}

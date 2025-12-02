@@ -6,6 +6,7 @@
 
 import { parse, type Shape, type Element as PptxElement } from 'pptxtojson';
 import { nanoid } from 'nanoid';
+import { getSvgPathRange } from './svgPathParser';
 import type {
   Presentation,
   Slide,
@@ -205,6 +206,10 @@ export async function importPPTX(file: File): Promise<Presentation> {
           const sortedElements = [...item.elements, ...item.layoutElements].sort((a: any, b: any) => a.order - b.order);
 
           for (const el of sortedElements) {
+            // Save original dimensions BEFORE scaling (needed for viewBox calculation)
+            const originWidth = el.width || 1;
+            const originHeight = el.height || 1;
+
             // Scale all dimensions by ratio
             el.width = el.width * ratio;
             el.height = el.height * ratio;
@@ -225,6 +230,7 @@ export async function importPPTX(file: File): Promise<Presentation> {
                 defaultColor: '#000000',
                 content: convertFontSizePtToPx(el.content, ratio),
                 lineHeight: 1,
+                vertical: el.isVertical,
               };
 
               if (el.fill?.type === 'color') {
@@ -311,6 +317,24 @@ export async function importPPTX(file: File): Promise<Presentation> {
                 } : undefined;
 
                 const fill = el.fill?.type === 'color' ? el.fill.value : '';
+                const pattern: string | undefined = el.fill?.type === 'image' ? el.fill.value.picBase64 : undefined;
+
+                // Calculate viewBox from path (PPTist logic)
+                let viewBox: [number, number] = [200, 200];
+                let path = 'M 0 0 L 200 0 L 200 200 L 0 200 Z';
+
+                if (el.path && el.path.indexOf('NaN') === -1) {
+                  const { maxX, maxY } = getSvgPathRange(el.path);
+                  path = el.path;
+
+                  // Calculate viewBox based on aspect ratio
+                  if ((maxX / maxY) > (originWidth / originHeight)) {
+                    viewBox = [maxX, maxX * originHeight / originWidth];
+                  }
+                  else {
+                    viewBox = [maxY * originWidth / originHeight, maxY];
+                  }
+                }
 
                 const element: PPTShapeElement = {
                   type: 'shape',
@@ -319,10 +343,11 @@ export async function importPPTX(file: File): Promise<Presentation> {
                   height: el.height,
                   left: el.left,
                   top: el.top,
-                  viewBox: [200, 200],
-                  path: el.path || 'M 0 0 L 200 0 L 200 200 L 0 200 Z',
+                  viewBox,
+                  path,
                   fill,
                   gradient,
+                  pattern,
                   fixedRatio: false,
                   rotate: el.rotate || 0,
                   flipH: el.isFlipH,
@@ -502,6 +527,49 @@ export async function importPPTX(file: File): Promise<Presentation> {
               };
 
               slide.elements.push(chartEl);
+            }
+            else if (el.type === 'math') {
+              // Math formulas are rendered as images
+              slide.elements.push({
+                type: 'image',
+                id: nanoid(10),
+                src: el.picBase64,
+                width: el.width,
+                height: el.height,
+                left: el.left,
+                top: el.top,
+                fixedRatio: true,
+                rotate: 0,
+              });
+            }
+            else if (el.type === 'audio') {
+              slide.elements.push({
+                type: 'audio',
+                id: nanoid(10),
+                src: el.blob || el.src,
+                width: el.width,
+                height: el.height,
+                left: el.left,
+                top: el.top,
+                rotate: 0,
+                fixedRatio: false,
+                color: '#3B82F6',
+                loop: false,
+                autoplay: false,
+              });
+            }
+            else if (el.type === 'video') {
+              slide.elements.push({
+                type: 'video',
+                id: nanoid(10),
+                src: el.blob || el.src,
+                width: el.width,
+                height: el.height,
+                left: el.left,
+                top: el.top,
+                rotate: 0,
+                autoplay: false,
+              });
             }
           }
 
