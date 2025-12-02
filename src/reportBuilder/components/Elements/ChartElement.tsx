@@ -36,14 +36,23 @@ interface ChartElementProps {
 }
 
 export const ChartElement: React.FC<ChartElementProps> = ({ element, isSelected }) => {
-  const { chartType, data, themeColors, options, textColor, lineColor, fill, outline } =
+  const { chartType, data, themeColors = ['#5B8FF9', '#5AD8A6', '#5D7092', '#F6BD16', '#E86452'], options = {}, textColor, lineColor, fill, outline } =
     element;
+
+  // Safety check for data
+  if (!data || !data.labels || !data.legends || !data.series) {
+    return (
+      <div className="flex items-center justify-center h-full bg-gray-100 text-sm text-gray-500">
+        Invalid chart data
+      </div>
+    );
+  }
 
   // Prepare data for Recharts
   const chartData = data.labels.map((label, idx) => {
     const dataPoint: any = { name: label };
     data.legends.forEach((legend, legendIdx) => {
-      dataPoint[legend] = data.series[legendIdx][idx];
+      dataPoint[legend] = data.series[legendIdx]?.[idx] ?? 0;
     });
     return dataPoint;
   });

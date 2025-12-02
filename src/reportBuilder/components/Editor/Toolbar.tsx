@@ -182,8 +182,10 @@ export const Toolbar: React.FC = () => {
         legends: ['Series 1'],
         series: [[10, 20, 30, 40]],
       },
+      themeColors: ['#5B8FF9', '#5AD8A6', '#5D7092', '#F6BD16', '#E86452'],
+      textColor: '#666666',
       options: {},
-      fill: '#3B82F6',
+      fill: '#FFFFFF',
     });
   };
 

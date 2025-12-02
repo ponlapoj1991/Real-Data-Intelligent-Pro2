@@ -58,14 +58,14 @@ export const Thumbnails: React.FC = () => {
 
               {/* Slide Preview */}
               <div className="aspect-video bg-white rounded overflow-hidden relative">
-                <div className="absolute inset-0 flex items-center justify-center">
+                <div className="absolute inset-0 overflow-hidden">
                   <div
-                    className="relative bg-white"
+                    className="origin-top-left"
                     style={{
                       width: presentation.width,
                       height: presentation.height,
-                      transform: `scale(${200 / presentation.width})`,
-                      transformOrigin: 'center center',
+                      transform: `scale(${1 / (presentation.width / 200)})`,
+                      transformOrigin: 'top left',
                     }}
                   >
                     {/* Background */}
