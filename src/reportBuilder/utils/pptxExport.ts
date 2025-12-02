@@ -211,13 +211,53 @@ function convertTextElement(
   element: PPTTextElement,
   baseOptions: any
 ): { type: string; options: any } {
-  // Strip HTML tags and convert to plain text (simplified)
-  const text = element.content.replace(/<[^>]*>/g, '');
+  // Parse HTML content to extract formatting
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(element.content, 'text/html');
+
+  // Extract text with basic formatting
+  let text: any[] = [];
+  const spans = doc.querySelectorAll('span');
+
+  if (spans.length > 0) {
+    spans.forEach(span => {
+      const style = span.style;
+      const textContent = span.textContent || '';
+
+      // Extract font size from inline style
+      let fontSize = 14;
+      if (style.fontSize) {
+        const match = style.fontSize.match(/(\d+)/);
+        if (match) fontSize = parseInt(match[1]);
+      }
+
+      // Extract font family
+      const fontFace = style.fontFamily || element.defaultFontName || 'Arial';
+
+      // Extract color
+      const color = style.color || element.defaultColor || '#000000';
+
+      text.push({
+        text: textContent,
+        options: {
+          fontSize,
+          fontFace: fontFace.replace(/['"]/g, ''),
+          color: color.replace('#', ''),
+          bold: style.fontWeight === 'bold' || span.querySelector('strong') !== null,
+          italic: style.fontStyle === 'italic' || span.querySelector('em') !== null,
+          underline: style.textDecoration?.includes('underline'),
+        }
+      });
+    });
+  } else {
+    // Fallback to plain text
+    text = doc.body.textContent || element.content.replace(/<[^>]*>/g, '');
+  }
 
   const options = {
     ...baseOptions,
     text,
-    fontSize: parseInt(element.defaultFontName) || 14,
+    fontSize: 14,
     fontFace: element.defaultFontName || 'Arial',
     color: element.defaultColor?.replace('#', ''),
     fill: element.fill ? { color: element.fill.replace('#', '') } : undefined,
@@ -232,10 +272,10 @@ function convertTextElement(
     shadow: element.shadow
       ? {
           type: 'outer',
-          blur: element.shadow.blur,
-          offset: element.shadow.h,
+          blur: element.shadow.blur / 96,
+          offset: element.shadow.h / 96,
           angle: 45,
-          color: element.shadow.color,
+          color: element.shadow.color?.replace('#', ''),
         }
       : undefined,
   };
@@ -277,14 +317,39 @@ function convertShapeElement(
   element: PPTShapeElement,
   baseOptions: any
 ): { type: string; options: any } {
-  // Map to PptxGenJS shape type (simplified)
+  // Map shape types from pathFormula to PptxGenJS shape types
   let shape = 'rect';
 
-  // Basic shape mapping based on path
-  if (element.path.includes('circle') || element.path.includes('C')) {
-    shape = 'ellipse';
-  } else if (element.path.includes('triangle')) {
-    shape = 'triangle';
+  if (element.pathFormula) {
+    const formulaMap: Record<string, string> = {
+      'roundRect': 'roundRect',
+      'ellipse': 'ellipse',
+      'triangle': 'triangle',
+      'trapezoid': 'trapezoid',
+      'parallelogramLeft': 'parallelogram',
+      'parallelogramRight': 'parallelogram',
+      'plus': 'plus',
+      'pentagon': 'pentagon',
+      'hexagon': 'hexagon',
+      'octagon': 'octagon',
+      'star5': 'star5',
+      'star6': 'star6',
+      'cloud': 'cloud',
+      'heart': 'heart',
+      'lightning': 'lightning',
+      'moon': 'moon',
+      'sun': 'sun',
+    };
+    shape = formulaMap[element.pathFormula] || 'rect';
+  }
+  // Fallback: analyze path
+  else if (element.path) {
+    const pathLower = element.path.toLowerCase();
+    if (pathLower.includes('a ') && (pathLower.match(/a /g) || []).length > 2) {
+      shape = 'ellipse';
+    } else if (pathLower.match(/m.*l.*l.*z/) && (pathLower.match(/l/g) || []).length === 2) {
+      shape = 'triangle';
+    }
   }
 
   const options = {
@@ -294,17 +359,25 @@ function convertShapeElement(
     line: element.outline
       ? {
           color: element.outline.color?.replace('#', ''),
-          width: element.outline.width,
+          width: element.outline.width / 96,
         }
       : undefined,
+    opacity: element.opacity !== undefined ? element.opacity / 100 : undefined,
   };
 
   // Add text if present
   if (element.text) {
-    const text = element.text.content.replace(/<[^>]*>/g, '');
-    options.text = text;
-    options.fontFace = element.text.defaultFontName;
-    options.color = element.text.defaultColor?.replace('#', '');
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(element.text.content, 'text/html');
+    const text = doc.body.textContent || element.text.content.replace(/<[^>]*>/g, '');
+
+    options.text = [{ text, options: {
+      fontSize: 14,
+      fontFace: element.text.defaultFontName,
+      color: element.text.defaultColor?.replace('#', ''),
+      align: element.text.align || 'center',
+      valign: element.text.align || 'middle',
+    }}];
   }
 
   return { type: 'shape', options };

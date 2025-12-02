@@ -23,6 +23,7 @@ interface Guide {
 export const Viewport: React.FC<ViewportProps> = ({ width, height }) => {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [alignmentGuides, setAlignmentGuides] = useState<Guide[]>([]);
+  const [temporaryTransforms, setTemporaryTransforms] = useState<Record<string, { left?: number; top?: number; width?: number; height?: number; rotate?: number }>>({});
 
   const {
     presentation,
@@ -115,14 +116,20 @@ export const Viewport: React.FC<ViewportProps> = ({ width, height }) => {
 
         {/* Elements */}
         <div className="relative w-full h-full">
-          {currentSlide.elements.map((element) => (
-            <ElementRenderer
-              key={element.id}
-              element={element}
-              isSelected={selectedElementIds.includes(element.id)}
-              onClick={(e) => handleElementClick(e, element.id)}
-            />
-          ))}
+          {currentSlide.elements.map((element) => {
+            // Apply temporary transforms if element is being dragged
+            const tempTransform = temporaryTransforms[element.id];
+            const displayElement = tempTransform ? { ...element, ...tempTransform } : element;
+
+            return (
+              <ElementRenderer
+                key={element.id}
+                element={displayElement as typeof element}
+                isSelected={selectedElementIds.includes(element.id)}
+                onClick={(e) => handleElementClick(e, element.id)}
+              />
+            );
+          })}
         </div>
 
         {/* Transform Boxes for Selected Elements */}
@@ -137,19 +144,45 @@ export const Viewport: React.FC<ViewportProps> = ({ width, height }) => {
           const height = 'height' in element ? element.height : 100;
           const rotate = 'rotate' in element ? element.rotate : 0;
 
+          // Apply temporary transforms if dragging
+          const tempTransform = temporaryTransforms[elementId];
+          const displayLeft = tempTransform?.left !== undefined ? tempTransform.left : element.left;
+          const displayTop = tempTransform?.top !== undefined ? tempTransform.top : element.top;
+          const displayWidth = tempTransform?.width !== undefined ? tempTransform.width : element.width;
+          const displayHeight = tempTransform?.height !== undefined ? tempTransform.height : height;
+          const displayRotate = tempTransform?.rotate !== undefined ? tempTransform.rotate : rotate;
+
           return (
             <TransformBox
               key={`transform-${elementId}`}
-              left={element.left}
-              top={element.top}
-              width={element.width}
-              height={height}
-              rotate={rotate}
+              left={displayLeft}
+              top={displayTop}
+              width={displayWidth}
+              height={displayHeight}
+              rotate={displayRotate}
               locked={element.lock}
               onTransform={(updates) => {
-                updateElement(elementId, updates);
+                // Store temporary transforms without updating Zustand state
+                setTemporaryTransforms(prev => ({
+                  ...prev,
+                  [elementId]: {
+                    ...prev[elementId],
+                    ...updates,
+                  },
+                }));
               }}
               onTransformEnd={() => {
+                // Commit all temporary transforms to store
+                const tempTransform = temporaryTransforms[elementId];
+                if (tempTransform) {
+                  updateElement(elementId, tempTransform);
+                }
+                // Clear temporary state
+                setTemporaryTransforms(prev => {
+                  const newState = { ...prev };
+                  delete newState[elementId];
+                  return newState;
+                });
                 useSlideStore.getState().saveHistory();
               }}
             />

@@ -20,6 +20,28 @@ export enum ElementTypes {
   AUDIO = 'audio',
 }
 
+export enum ShapePathFormulasKeys {
+  ROUND_RECT = 'roundRect',
+  CUT_RECT_DIAGONAL = 'cutRectDiagonal',
+  CUT_RECT_SINGLE = 'cutRectSingle',
+  CUT_RECT_SAMESIDE = 'cutRectSameside',
+  ROUND_RECT_DIAGONAL = 'roundRectDiagonal',
+  ROUND_RECT_SINGLE = 'roundRectSingle',
+  ROUND_RECT_SAMESIDE = 'roundRectSameside',
+  CUT_ROUND_RECT = 'cutRoundRect',
+  MESSAGE = 'message',
+  ROUND_MESSAGE = 'roundMessage',
+  L = 'L',
+  RING_RECT = 'ringRect',
+  PLUS = 'plus',
+  TRIANGLE = 'triangle',
+  PARALLELOGRAM_LEFT = 'parallelogramLeft',
+  PARALLELOGRAM_RIGHT = 'parallelogramRight',
+  TRAPEZOID = 'trapezoid',
+  BULLET = 'bullet',
+  INDICATOR = 'indicator',
+}
+
 // ============================================
 // Style Types
 // ============================================

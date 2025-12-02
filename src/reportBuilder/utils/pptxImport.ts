@@ -7,6 +7,7 @@
 import { parse, type Shape, type Element as PptxElement } from 'pptxtojson';
 import { nanoid } from 'nanoid';
 import { getSvgPathRange } from './svgPathParser';
+import { SHAPE_LIST, SHAPE_PATH_FORMULAS, type ShapePoolItem } from '../configs/shapes';
 import type {
   Presentation,
   Slide,
@@ -77,6 +78,15 @@ const rotateLine = (line: PPTLineElement, angleDeg: number) => {
     end: endAdjusted,
     offset,
   };
+};
+
+// Find matching shape from SHAPE_LIST by pptxShapeType
+const findShapeByType = (shapType: string): ShapePoolItem | null => {
+  for (const group of SHAPE_LIST) {
+    const found = group.children.find(shape => shape.pptxShapeType === shapType);
+    if (found) return found;
+  }
+  return null;
 };
 
 const parseLineElement = (el: Shape, ratio: number): PPTLineElement => {
@@ -311,7 +321,9 @@ export async function importPPTX(file: File): Promise<Presentation> {
                 slide.elements.push(lineElement);
               }
               else {
-                // Regular shape
+                // Regular shape - match with SHAPE_LIST
+                const matchedShape = findShapeByType(el.shapType);
+
                 const gradient: Gradient | undefined = el.fill?.type === 'gradient' ? {
                   type: el.fill.value.path === 'line' ? 'linear' : 'radial',
                   colors: el.fill.value.colors.map((item: any) => ({
@@ -324,11 +336,26 @@ export async function importPPTX(file: File): Promise<Presentation> {
                 const fill = el.fill?.type === 'color' ? el.fill.value : '';
                 const pattern: string | undefined = el.fill?.type === 'image' ? el.fill.value.picBase64 : undefined;
 
-                // Calculate viewBox from path (PPTist logic)
+                // Use matched shape or fallback to el.path
                 let viewBox: [number, number] = [200, 200];
                 let path = 'M 0 0 L 200 0 L 200 200 L 0 200 Z';
 
-                if (el.path && el.path.indexOf('NaN') === -1) {
+                if (matchedShape) {
+                  // Use shape from library
+                  path = matchedShape.path;
+                  viewBox = matchedShape.viewBox;
+
+                  // If shape has pathFormula, calculate dynamic path
+                  if (matchedShape.pathFormula && SHAPE_PATH_FORMULAS[matchedShape.pathFormula]) {
+                    const formula = SHAPE_PATH_FORMULAS[matchedShape.pathFormula];
+                    if (formula.formula) {
+                      path = formula.formula(el.width, el.height, formula.defaultValue);
+                      viewBox = [el.width, el.height];
+                    }
+                  }
+                }
+                else if (el.path && el.path.indexOf('NaN') === -1) {
+                  // Fallback to pptxtojson path
                   const { maxX, maxY } = getSvgPathRange(el.path);
                   path = el.path;
 
@@ -357,6 +384,7 @@ export async function importPPTX(file: File): Promise<Presentation> {
                   rotate: el.rotate || 0,
                   flipH: el.isFlipH,
                   flipV: el.isFlipV,
+                  pathFormula: matchedShape?.pathFormula,
                 };
 
                 if (el.borderWidth) {
