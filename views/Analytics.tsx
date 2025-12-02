@@ -13,6 +13,7 @@ import { exportToExcel } from '../utils/excel';
 import ChartBuilder from '../components/ChartBuilder';
 import EmptyState from '../components/EmptyState';
 import Skeleton from '../components/Skeleton';
+import { ensureDataSources, setActiveDataSource } from '../utils/dataSources';
 
 interface AnalyticsProps {
   project: Project;
@@ -54,6 +55,14 @@ const formatWidgetValue = (widget: DashboardWidget, val: number) => {
 };
 
 const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
+  const needsNormalization = !project.dataSources?.length || !project.activeDataSourceId;
+  const { project: normalizedProject, active: activeSource } = useMemo(() => ensureDataSources(project), [project]);
+  useEffect(() => {
+    if (needsNormalization && onUpdateProject) {
+      onUpdateProject(normalizedProject);
+    }
+  }, [needsNormalization, normalizedProject, onUpdateProject]);
+
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
 
@@ -61,6 +70,9 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
   const [widgets, setWidgets] = useState<DashboardWidget[]>(project.dashboard || []);
   const [isBuilderOpen, setIsBuilderOpen] = useState(false);
   const [editingWidget, setEditingWidget] = useState<DashboardWidget | null>(null);
+
+  const activeData = activeSource.rows;
+  const activeColumns = activeSource.columns;
   
   // Phase 3 & 5: Filters, Presentation & Interaction Modes
   const [filters, setFilters] = useState<DashboardFilter[]>([]);
@@ -84,10 +96,10 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
   // 1. Prepare Base Data (Raw or Structured)
   const baseData = useMemo(() => {
       if (project.transformRules && project.transformRules.length > 0) {
-          return applyTransformation(project.data, project.transformRules);
+          return applyTransformation(activeData, project.transformRules);
       }
-      return project.data;
-  }, [project]);
+      return activeData;
+  }, [activeData, project.transformRules]);
 
   const availableColumns = useMemo(() => {
       if (baseData.length === 0) return [];
@@ -174,7 +186,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       setEditingWidget(null);
 
       if (onUpdateProject) {
-          const updatedProject = { ...project, dashboard: updatedWidgets };
+          const updatedProject = { ...normalizedProject, dashboard: updatedWidgets };
           onUpdateProject(updatedProject);
           await saveProject(updatedProject);
       }
@@ -186,12 +198,19 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
       
       const updatedWidgets = widgets.filter(w => w.id !== id);
       setWidgets(updatedWidgets);
-      
+
       if (onUpdateProject) {
-          const updatedProject = { ...project, dashboard: updatedWidgets };
+          const updatedProject = { ...normalizedProject, dashboard: updatedWidgets };
           onUpdateProject(updatedProject);
           await saveProject(updatedProject);
       }
+  };
+
+  const handleActiveChange = async (value: string) => {
+      if (!onUpdateProject) return;
+      const updated = setActiveDataSource(normalizedProject, value);
+      onUpdateProject(updated);
+      await saveProject(updated);
   };
 
   const handleExportPPT = async () => {
@@ -1038,7 +1057,20 @@ const Analytics: React.FC<AnalyticsProps> = ({ project, onUpdateProject }) => {
         </div>
 
         <div className="flex flex-wrap gap-3">
-            
+
+            <div className="flex items-center space-x-2 bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm">
+                <span className="text-xs font-semibold text-gray-500 uppercase">Active table</span>
+                <select
+                  value={activeSource.id}
+                  onChange={(e) => handleActiveChange(e.target.value)}
+                  className="text-sm border border-gray-200 bg-white rounded-md px-2 py-1 focus:ring-2 focus:ring-blue-500 outline-none"
+                >
+                  {(normalizedProject.dataSources || []).map((src) => (
+                    <option key={src.id} value={src.id}>{src.name}</option>
+                  ))}
+                </select>
+            </div>
+
             {/* Interaction Toggle */}
             <div className="bg-white border border-gray-300 rounded-lg flex p-1 shadow-sm">
                 <button 

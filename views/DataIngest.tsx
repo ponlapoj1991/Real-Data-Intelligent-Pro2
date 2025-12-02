@@ -1,279 +1,372 @@
-
-import React, { useCallback, useState } from 'react';
-import { UploadCloud, FileSpreadsheet, CheckCircle2, Link as LinkIcon, DownloadCloud } from 'lucide-react';
-import { parseExcelFile, parseCsvUrl, inferColumns } from '../utils/excel';
-import { Project, RawRow } from '../types';
-import { saveProject, appendProjectData } from '../utils/storage-compat';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Plus, RefreshCcw, Pencil, Star, Trash2, Loader2, Download, FileDown } from 'lucide-react';
+import { DataSource, DataSourceKind, Project, RawRow } from '../types';
 import { useToast } from '../components/ToastProvider';
 import { useExcelWorker } from '../hooks/useExcelWorker';
+import { exportToCsv, exportToExcel, inferColumns } from '../utils/excel';
+import { ensureDataSources, getDataSourcesByKind, removeDataSource, setActiveDataSource, updateDataSourceRows, upsertDataSource } from '../utils/dataSources';
+import { saveProject } from '../utils/storage-compat';
 
 interface DataIngestProps {
   project: Project;
   onUpdateProject: (p: Project) => void;
-  onNext: () => void;
+  kind: DataSourceKind;
+  onNext?: () => void;
 }
 
-const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, onNext }) => {
-  const [isDragging, setIsDragging] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+interface PendingUpload {
+  mode: 'new' | 'append' | 'replace';
+  sourceId?: string;
+  name?: string;
+}
+
+const titles: Record<DataSourceKind, { title: string; subtitle: string; empty: string }> = {
+  ingestion: {
+    title: 'Ingestion Data',
+    subtitle: 'Upload raw files as reusable tables.',
+    empty: 'No ingestion tables yet. Upload a file to get started.',
+  },
+  prepared: {
+    title: 'Preparation Data',
+    subtitle: 'Data saved from Preparation Tools.',
+    empty: 'No prepared tables yet. Save from Preparation Tools to populate this list.',
+  },
+};
+
+const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, kind, onNext }) => {
+  const needsNormalization = !project.dataSources?.length || !project.activeDataSourceId;
+  const normalizedProject = useMemo(() => (needsNormalization ? ensureDataSources(project).project : project), [needsNormalization, project]);
+
+  useEffect(() => {
+    if (needsNormalization) {
+      onUpdateProject(normalizedProject);
+    }
+  }, [needsNormalization, normalizedProject, onUpdateProject]);
+
   const { showToast } = useToast();
+  const [isLoading, setIsLoading] = useState(false);
+  const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
+  const [isNameModalOpen, setIsNameModalOpen] = useState(false);
+  const [tableName, setTableName] = useState('');
+  const [nameError, setNameError] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Web Worker for Excel parsing
-  const { parseFile, isProcessing, progress, error: workerError } = useExcelWorker();
+  const sources = useMemo(() => getDataSourcesByKind(normalizedProject, kind).sort((a, b) => b.updatedAt - a.updatedAt), [kind, normalizedProject]);
 
-  // New state for URL import
-  const [importMode, setImportMode] = useState<'file' | 'url'>('file');
-  const [sheetUrl, setSheetUrl] = useState('');
+  const { parseFile } = useExcelWorker();
 
-  const processData = async (newData: RawRow[]) => {
-      if (newData.length === 0) {
-        throw new Error("The dataset appears to be empty.");
-      }
-      
-      const updatedData = [...project.data, ...newData];
-      
-      // If columns aren't defined yet, define them from the first row of new data
-      let updatedColumns = project.columns;
-      if (updatedColumns.length === 0 && newData.length > 0) {
-        updatedColumns = inferColumns(newData[0]);
-      } else if (newData.length > 0) {
-        // Merge new columns if any
-        const newCols = inferColumns(newData[0]);
-        newCols.forEach(nc => {
-            if (!updatedColumns.find(c => c.key === nc.key)) {
-                updatedColumns.push(nc);
-            }
-        });
-      }
+  const buildColumns = (rows: RawRow[]): ReturnType<typeof inferColumns> => {
+    if (!rows.length) return [];
+    return inferColumns(rows[0]);
+  };
 
-      const updatedProject = {
-        ...project,
-        data: updatedData,
-        columns: updatedColumns,
-        lastModified: Date.now()
+  const persistProject = async (updated: Project) => {
+    onUpdateProject(updated);
+    await saveProject(updated);
+  };
+
+  const resetFileInput = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const triggerFilePicker = () => {
+    resetFileInput();
+    fileInputRef.current?.click();
+  };
+
+  const submitNewTableName = () => {
+    const trimmed = tableName.trim();
+    if (!trimmed) {
+      setNameError('Please enter a table name.');
+      return;
+    }
+    setPendingUpload({ mode: 'new', name: trimmed });
+    setIsNameModalOpen(false);
+    setTimeout(() => triggerFilePicker(), 10);
+  };
+
+  const startUpload = (config: PendingUpload) => {
+    if (config.mode === 'new') {
+      const suggested = kind === 'ingestion' ? `Table ${sources.length + 1}` : `Prepared Table ${sources.length + 1}`;
+      setTableName(suggested);
+      setNameError('');
+      setPendingUpload({ mode: 'new' });
+      setIsNameModalOpen(true);
+      return;
+    }
+
+    setPendingUpload(config);
+    triggerFilePicker();
+  };
+
+  const processIncomingData = async (rows: RawRow[], upload: PendingUpload) => {
+    const columns = buildColumns(rows);
+
+    if (upload.mode === 'new') {
+      const newSource: DataSource = {
+        id: crypto.randomUUID(),
+        name: upload.name || 'New Table',
+        kind,
+        rows,
+        columns,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
       };
+      const updatedProject = upsertDataSource(normalizedProject, newSource, { setActive: true });
+      await persistProject(updatedProject);
+      return;
+    }
 
-      await saveProject(updatedProject);
-      onUpdateProject(updatedProject);
-      showToast('Import Successful', `Added ${newData.length} rows to the project.`, 'success');
+    if (!upload.sourceId) return;
+    const mode = upload.mode === 'append' ? 'append' : 'replace';
+    const updatedProject = updateDataSourceRows(normalizedProject, upload.sourceId, rows, columns, mode);
+    await persistProject(updatedProject);
   };
 
   const handleFileUpload = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-
+    const targetUpload: PendingUpload = pendingUpload || { mode: 'new', name: `Table ${sources.length + 1}` };
     const file = files[0];
-
-    // Validate file type
     if (!file.name.match(/\.(xlsx|xls|csv)$/)) {
       showToast('Invalid Format', 'Please upload an Excel (.xlsx, .xls) or CSV file.', 'error');
       return;
     }
-
     setIsLoading(true);
-
     try {
-      // Use Web Worker for parsing (non-blocking)
       const newData = await parseFile(file);
-
       if (newData.length === 0) {
         throw new Error('The file appears to be empty.');
       }
-
-      // Process and save data
-      await processData(newData);
-
+      await processIncomingData(newData, targetUpload);
+      showToast('Import Successful', `${file.name} processed successfully.`, 'success');
     } catch (err: any) {
-      console.error('[DataIngest] Upload error:', err);
+      console.error('[DataManagement] Upload error:', err);
       showToast('Import Failed', err.message || 'Failed to process file.', 'error');
     } finally {
       setIsLoading(false);
+      setPendingUpload(null);
     }
   };
 
-  const handleUrlImport = async () => {
-      if (!sheetUrl) return;
-      setIsLoading(true);
-      try {
-          const newData = await parseCsvUrl(sheetUrl);
-          await processData(newData);
-          setSheetUrl('');
-      } catch (err: any) {
-          console.error(err);
-          showToast('Link Import Failed', "Ensure the link is a direct CSV or published Google Sheet CSV link.", 'error');
-      } finally {
-          setIsLoading(false);
-      }
+  const setActive = async (id: string) => {
+    const updated = setActiveDataSource(normalizedProject, id);
+    await persistProject(updated);
+    showToast('Active table changed', 'Other features will now use this table.', 'info');
   };
 
-  const onDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  }, []);
+  const handleDownload = (source: DataSource, format: 'excel' | 'csv') => {
+    if (!source.rows || source.rows.length === 0) {
+      showToast('No data to export', 'This table is empty.', 'warning');
+      return;
+    }
 
-  const onDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-  }, []);
+    const safeName = source.name.trim() || 'Exported Table';
+    if (format === 'excel') {
+      exportToExcel(source.rows, safeName);
+    } else {
+      exportToCsv(source.rows, safeName);
+    }
+  };
 
-  const onDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    handleFileUpload(e.dataTransfer.files);
-  }, []);
+  const meta = titles[kind];
 
   return (
-    <div className="p-8 max-w-4xl mx-auto">
-      <div className="mb-8">
-        <h2 className="text-2xl font-bold text-gray-900">Data Sources</h2>
-        <p className="text-gray-500">Import your social listening data.</p>
-      </div>
+    <div className="p-8 max-w-7xl mx-auto space-y-6">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".xlsx, .xls, .csv"
+        onChange={(e) => handleFileUpload(e.target.files)}
+        className="hidden"
+      />
 
-      {/* Tabs */}
-      <div className="flex space-x-4 mb-6">
-          <button 
-            onClick={() => setImportMode('file')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${importMode === 'file' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'}`}
-          >
-             <div className="flex items-center space-x-2">
-                 <UploadCloud className="w-4 h-4" />
-                 <span>Upload File</span>
-             </div>
-          </button>
-          <button 
-            onClick={() => setImportMode('url')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${importMode === 'url' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'}`}
-          >
-             <div className="flex items-center space-x-2">
-                 <LinkIcon className="w-4 h-4" />
-                 <span>Google Sheets / CSV Link</span>
-             </div>
-          </button>
-      </div>
-
-      {importMode === 'file' ? (
-        <div 
-            className={`border-2 border-dashed rounded-xl p-12 text-center transition-all duration-200 ease-in-out ${
-            isDragging 
-                ? 'border-blue-500 bg-blue-50 scale-[1.02]' 
-                : 'border-gray-300 hover:border-blue-400 hover:bg-gray-50'
-            } bg-white`}
-            onDragOver={onDragOver}
-            onDragLeave={onDragLeave}
-            onDrop={onDrop}
-        >
-            <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-6">
-                {isLoading || isProcessing ? (
-                    <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
-                ) : (
-                    <UploadCloud className="w-10 h-10 text-blue-600" />
-                )}
+      {isNameModalOpen && (
+        <div className="fixed inset-0 bg-black/40 z-40 flex items-center justify-center px-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 space-y-4">
+            <div className="space-y-1">
+              <p className="text-sm uppercase tracking-wide text-blue-600 font-semibold">New table</p>
+              <h3 className="text-xl font-bold text-gray-900">Name your table</h3>
+              <p className="text-sm text-gray-500">Set a table name before uploading your file.</p>
             </div>
 
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">
-            {isLoading || isProcessing ? 'Processing Data...' : 'Drag & Drop your file here'}
-            </h3>
-            <p className="text-gray-500 mb-6 text-sm">
-            Supports .xlsx, .xls, .csv. Data will be appended to existing records.
-            </p>
-
-            {/* Progress Bar */}
-            {isProcessing && progress > 0 && (
-              <div className="w-full max-w-md mx-auto mb-6">
-                <div className="flex justify-between text-sm text-gray-600 mb-2">
-                  <span>Parsing file...</span>
-                  <span>{progress}%</span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2.5">
-                  <div
-                    className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
-                    style={{ width: `${progress}%` }}
-                  ></div>
-                </div>
-              </div>
-            )}
-
-            {!isLoading && (
-                <div className="relative inline-block">
-                <input
-                    type="file"
-                    accept=".xlsx, .xls, .csv"
-                    onChange={(e) => handleFileUpload(e.target.files)}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                />
-                <button className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg font-medium shadow-sm transition-colors">
-                    Browse Files
-                </button>
-                </div>
-            )}
-        </div>
-      ) : (
-        <div className="bg-white border border-gray-200 rounded-xl p-8">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Import from URL</h3>
-            <p className="text-gray-500 text-sm mb-6">
-                Paste a direct link to a CSV file or a <strong>published Google Sheet CSV link</strong>.
-                <br/><span className="text-xs text-gray-400">For Google Sheets: File {'>'} Share {'>'} Publish to web {'>'} Select 'CSV'</span>
-            </p>
-            
-            <div className="flex space-x-3">
-                <div className="relative flex-1">
-                    <LinkIcon className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                    <input 
-                        type="text"
-                        value={sheetUrl}
-                        onChange={(e) => setSheetUrl(e.target.value)}
-                        placeholder="https://docs.google.com/spreadsheets/d/.../export?format=csv"
-                        className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                    />
-                </div>
-                <button 
-                    onClick={handleUrlImport}
-                    disabled={isLoading || !sheetUrl}
-                    className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white px-6 py-2.5 rounded-lg font-medium shadow-sm transition-colors flex items-center"
-                >
-                    {isLoading ? 'Loading...' : <><DownloadCloud className="w-4 h-4 mr-2" /> Import</>}
-                </button>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-gray-700">Table name</label>
+              <input
+                autoFocus
+                value={tableName}
+                onChange={(e) => {
+                  setTableName(e.target.value);
+                  setNameError('');
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    submitNewTableName();
+                  }
+                }}
+                className={`w-full rounded-lg border ${nameError ? 'border-red-300 focus:ring-red-200' : 'border-gray-200 focus:ring-blue-200'} px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2`}
+                placeholder="Customer Orders Q1"
+              />
+              {nameError && <p className="text-xs text-red-600">{nameError}</p>}
             </div>
-        </div>
-      )}
 
-      {/* Success Banner / Stats */}
-      {project.data.length > 0 && !isLoading && (
-        <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg flex items-center justify-between text-green-800 animate-fade-in-up">
-          <div className="flex items-center">
-            <CheckCircle2 className="w-5 h-5 mr-3" />
-            <span>Dataset ready with <strong>{project.data.length}</strong> rows.</span>
+            <div className="flex justify-end space-x-3 pt-2">
+              <button
+                onClick={() => {
+                  setIsNameModalOpen(false);
+                  setPendingUpload(null);
+                }}
+                className="px-3 py-2 text-sm rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  submitNewTableName();
+                }}
+                className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 shadow-sm"
+              >
+                Continue to upload
+              </button>
+            </div>
           </div>
-          <button onClick={onNext} className="text-sm font-semibold underline hover:text-green-900">
-            Go to Preparation &rarr;
-          </button>
         </div>
       )}
 
-      {/* Current Data Summary */}
-      <div className="mt-12">
-         <h4 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
-            <FileSpreadsheet className="w-5 h-5 mr-2 text-gray-500" />
-            Current Dataset Status
-         </h4>
-         <div className="bg-white shadow-sm border border-gray-200 rounded-lg overflow-hidden">
-            <div className="grid grid-cols-3 divide-x divide-gray-100">
-                <div className="p-6 text-center">
-                    <p className="text-gray-500 text-sm uppercase font-medium">Total Rows</p>
-                    <p className="text-3xl font-bold text-gray-900 mt-2">{project.data.length.toLocaleString()}</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">{meta.title}</h2>
+            <p className="text-gray-500 text-sm">{meta.subtitle}</p>
+          </div>
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={() => startUpload({ mode: 'new' })}
+              disabled={isLoading}
+              className="inline-flex items-center px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium shadow-sm hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              <Plus className="w-4 h-4 mr-1" /> Upload
+            </button>
+          </div>
+        </div>
+
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
+        <div className="flex items-center justify-between px-6 py-3 border-b border-gray-100 text-sm text-gray-500">
+          <div className="flex items-center space-x-2">
+            <span className="text-xs uppercase tracking-wide text-gray-400">Overview</span>
+            <span className="text-gray-300">•</span>
+            <span>{sources.length} table{sources.length === 1 ? '' : 's'}</span>
+          </div>
+          <div className="flex items-center space-x-2 text-xs text-gray-400">
+            <span>Rows per page</span>
+            <select className="border border-gray-200 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500">
+              <option>10</option>
+              <option>20</option>
+              <option>50</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="divide-y divide-gray-100">
+          <div className="grid grid-cols-[72px,2fr,1fr,1.2fr,1fr,1.6fr] px-6 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500 items-center">
+            <span className="text-center">No.</span>
+            <span>Table name</span>
+            <span className="text-center">Rows</span>
+            <span className="text-center">Updated</span>
+            <span className="text-center">Status</span>
+            <span className="text-right">Action</span>
+          </div>
+
+          {sources.length === 0 ? (
+            <div className="p-6 text-center text-gray-500 text-sm">{meta.empty}</div>
+          ) : (
+            sources.map((source, idx) => {
+              const isActive = normalizedProject.activeDataSourceId === source.id;
+              return (
+                <div key={source.id} className="grid grid-cols-[72px,2fr,1fr,1.2fr,1fr,1.6fr] px-6 py-3 items-center text-sm hover:bg-gray-50 gap-2">
+                  <span className="text-gray-500 text-center">{idx + 1}</span>
+                  <div>
+                    <div className="font-semibold text-gray-900">{source.name}</div>
+                    <div className="text-xs text-gray-500">{kind === 'ingestion' ? 'Uploaded table' : 'Prepared output'}</div>
+                  </div>
+                  <span className="text-gray-700 text-center">{source.rows.length.toLocaleString()}</span>
+                  <span className="text-gray-700 text-center">{new Date(source.updatedAt).toLocaleString()}</span>
+                  <div className="flex justify-center">
+                    {isActive ? (
+                      <span className="inline-flex items-center px-2 py-1 text-xs rounded-full bg-green-50 text-green-700 border border-green-100">Active</span>
+                    ) : (
+                      <button
+                        onClick={() => setActive(source.id)}
+                        className="inline-flex items-center px-2 py-1 text-xs rounded-full border border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-700"
+                      >
+                        <Star className="w-3 h-3 mr-1" /> Set active
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-end flex-wrap gap-2">
+                    {kind === 'prepared' && (
+                      <>
+                        <button
+                          onClick={() => handleDownload(source, 'excel')}
+                          disabled={isLoading}
+                          className="inline-flex items-center px-2.5 py-1.5 rounded-md border border-gray-200 text-gray-700 text-xs hover:border-blue-300 hover:text-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Download className="w-4 h-4 mr-1" /> Excel
+                        </button>
+                        <button
+                          onClick={() => handleDownload(source, 'csv')}
+                          disabled={isLoading}
+                          className="inline-flex items-center px-2.5 py-1.5 rounded-md border border-gray-200 text-gray-700 text-xs hover:border-blue-300 hover:text-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <FileDown className="w-4 h-4 mr-1" /> CSV
+                        </button>
+                      </>
+                    )}
+                    <button
+                      onClick={() => startUpload({ mode: 'append', sourceId: source.id })}
+                      disabled={isLoading}
+                      className="inline-flex items-center px-2.5 py-1.5 rounded-md border border-gray-200 text-gray-700 text-xs hover:border-blue-300 hover:text-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Pencil className="w-4 h-4 mr-1" /> Append
+                    </button>
+                    <button
+                      onClick={() => startUpload({ mode: 'replace', sourceId: source.id })}
+                      disabled={isLoading}
+                      className="inline-flex items-center px-2.5 py-1.5 rounded-md border border-gray-200 text-gray-700 text-xs hover:border-blue-300 hover:text-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <RefreshCcw className="w-4 h-4 mr-1" /> Replace
+                    </button>
+                    <button
+                      onClick={async () => {
+                        const confirmed = confirm('Delete this table?');
+                        if (!confirmed) return;
+                        const updated = removeDataSource(normalizedProject, source.id);
+                        await persistProject(updated);
+                        showToast('Table deleted', `${source.name} has been removed.`, 'info');
+                      }}
+                      disabled={isLoading}
+                      className="inline-flex items-center px-2.5 py-1.5 rounded-md border border-red-100 text-red-600 text-xs hover:border-red-200 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Trash2 className="w-4 h-4 mr-1" /> Delete
+                    </button>
+                  </div>
                 </div>
-                <div className="p-6 text-center">
-                    <p className="text-gray-500 text-sm uppercase font-medium">Columns</p>
-                    <p className="text-3xl font-bold text-gray-900 mt-2">{project.columns.length}</p>
-                </div>
-                <div className="p-6 text-center">
-                    <p className="text-gray-500 text-sm uppercase font-medium">Last Upload</p>
-                    <p className="text-lg font-semibold text-gray-900 mt-3">
-                        {new Date(project.lastModified).toLocaleDateString()}
-                    </p>
-                </div>
-            </div>
-         </div>
+              );
+            })
+          )}
+        </div>
       </div>
+
+      {isLoading && (
+        <div className="fixed inset-0 bg-black/30 z-30 flex items-center justify-center">
+          <div className="bg-white shadow-xl rounded-xl px-6 py-4 flex items-center space-x-3 text-gray-800">
+            <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+            <span className="text-sm font-medium">Uploading…</span>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };

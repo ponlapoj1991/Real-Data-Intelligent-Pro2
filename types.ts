@@ -7,7 +7,11 @@ export enum AppView {
 
 export enum ProjectTab {
   UPLOAD = 'UPLOAD',
-  PREP = 'PREP',
+  INGESTION = 'INGESTION',
+  PREPARATION = 'PREPARATION',
+  PREP_TOOLS = 'PREP_TOOLS',
+  CLEANSING = 'CLEANSING',
+  BUILD_STRUCTURE = 'BUILD_STRUCTURE',
   VISUALIZE = 'VISUALIZE',
   REPORT = 'REPORT',
   AI_AGENT = 'AI_AGENT',
@@ -60,6 +64,19 @@ export interface ColumnConfig {
   label?: string;
 }
 
+
+export type DataSourceKind = 'ingestion' | 'prepared';
+
+export interface DataSource {
+  id: string;
+  name: string;
+  kind: DataSourceKind;
+  rows: RawRow[];
+  columns: ColumnConfig[];
+  createdAt: number;
+  updatedAt: number;
+}
+
 // --- New Transformation Types ---
 
 export type TransformMethod = 
@@ -78,6 +95,19 @@ export interface TransformationRule {
   method: TransformMethod;
   params?: any;         // e.g. { delimiter: ',', index: 0, keyword: 'Service', datePart: 'date' }
   valueMap?: Record<string, string>; // New: Map result values to new labels (e.g. 'isComment' -> 'Comment')
+}
+
+export interface StructureRule extends TransformationRule {
+  sourceId: string;
+}
+
+export interface BuildStructureConfig {
+  id: string;
+  name: string;
+  sourceIds: string[];
+  rules: StructureRule[];
+  createdAt: number;
+  updatedAt: number;
 }
 
 // --- Dashboard & Widget Types (Phase 2 & 3 & 4) ---
@@ -354,10 +384,15 @@ export interface Project {
   name: string;
   description: string;
   lastModified: number;
-  data: RawRow[];          // Original Raw Data
-  columns: ColumnConfig[]; // Config for Raw Data
-  
+  data: RawRow[];          // Legacy active data snapshot
+  columns: ColumnConfig[]; // Legacy active schema
+
+  dataSources?: DataSource[]; // Multi-table support
+  activeDataSourceId?: string; // Which table powers features
+
   transformRules?: TransformationRule[];
+  buildStructureConfigs?: BuildStructureConfig[];
+  activeBuildConfigId?: string;
   dashboard?: DashboardWidget[]; // Saved Dashboard Config
   
   reportConfig?: ReportSlide[]; // Saved Report Builder Config

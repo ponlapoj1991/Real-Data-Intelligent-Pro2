@@ -46,6 +46,21 @@ export const parseCsvUrl = async (url: string): Promise<RawRow[]> => {
   }
 };
 
+const normalizeDataForExport = (data: RawRow[]) => {
+  return data.map(row => {
+    const newRow: any = {};
+    Object.keys(row).forEach(k => {
+      const val = row[k];
+      if (typeof val === 'object' && val !== null) {
+        newRow[k] = JSON.stringify(val);
+      } else {
+        newRow[k] = val;
+      }
+    });
+    return newRow;
+  });
+};
+
 export const exportToExcel = (data: RawRow[], filename: string) => {
   if (!window.XLSX) {
       alert("Excel library not loaded.");
@@ -56,23 +71,29 @@ export const exportToExcel = (data: RawRow[], filename: string) => {
       return;
   }
 
-  const safeData = data.map(row => {
-      const newRow: any = {};
-      Object.keys(row).forEach(k => {
-          const val = row[k];
-          if (typeof val === 'object' && val !== null) {
-              newRow[k] = JSON.stringify(val);
-          } else {
-              newRow[k] = val;
-          }
-      });
-      return newRow;
-  });
+  const safeData = normalizeDataForExport(data);
 
   const ws = window.XLSX.utils.json_to_sheet(safeData);
   const wb = window.XLSX.utils.book_new();
   window.XLSX.utils.book_append_sheet(wb, ws, "Processed Data");
   window.XLSX.writeFile(wb, `${filename}.xlsx`);
+};
+
+export const exportToCsv = (data: RawRow[], filename: string) => {
+  if (!window.XLSX) {
+    alert("Excel library not loaded.");
+    return;
+  }
+  if (!data || data.length === 0) {
+    alert("No data available to export.");
+    return;
+  }
+
+  const safeData = normalizeDataForExport(data);
+  const ws = window.XLSX.utils.json_to_sheet(safeData);
+  const wb = window.XLSX.utils.book_new();
+  window.XLSX.utils.book_append_sheet(wb, ws, "Processed Data");
+  window.XLSX.writeFile(wb, `${filename}.csv`, { bookType: 'csv' });
 };
 
 export const inferColumns = (row: RawRow): ColumnConfig[] => {
