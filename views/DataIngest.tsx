@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, RefreshCcw, Pencil, Star, Trash2, Loader2 } from 'lucide-react';
+import { Plus, RefreshCcw, Pencil, Star, Trash2, Loader2, Download, FileDown } from 'lucide-react';
 import { DataSource, DataSourceKind, Project, RawRow } from '../types';
 import { useToast } from '../components/ToastProvider';
 import { useExcelWorker } from '../hooks/useExcelWorker';
-import { inferColumns } from '../utils/excel';
+import { exportToCsv, exportToExcel, inferColumns } from '../utils/excel';
 import { ensureDataSources, getDataSourcesByKind, removeDataSource, setActiveDataSource, updateDataSourceRows, upsertDataSource } from '../utils/dataSources';
 import { saveProject } from '../utils/storage-compat';
 
@@ -156,6 +156,20 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, kind,
     showToast('Active table changed', 'Other features will now use this table.', 'info');
   };
 
+  const handleDownload = (source: DataSource, format: 'excel' | 'csv') => {
+    if (!source.rows || source.rows.length === 0) {
+      showToast('No data to export', 'This table is empty.', 'warning');
+      return;
+    }
+
+    const safeName = source.name.trim() || 'Exported Table';
+    if (format === 'excel') {
+      exportToExcel(source.rows, safeName);
+    } else {
+      exportToCsv(source.rows, safeName);
+    }
+  };
+
   const meta = titles[kind];
 
   return (
@@ -290,7 +304,25 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, kind,
                       </button>
                     )}
                   </div>
-                  <div className="flex items-center justify-end space-x-2">
+                  <div className="flex items-center justify-end flex-wrap gap-2">
+                    {kind === 'prepared' && (
+                      <>
+                        <button
+                          onClick={() => handleDownload(source, 'excel')}
+                          disabled={isLoading}
+                          className="inline-flex items-center px-2.5 py-1.5 rounded-md border border-gray-200 text-gray-700 text-xs hover:border-blue-300 hover:text-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Download className="w-4 h-4 mr-1" /> Excel
+                        </button>
+                        <button
+                          onClick={() => handleDownload(source, 'csv')}
+                          disabled={isLoading}
+                          className="inline-flex items-center px-2.5 py-1.5 rounded-md border border-gray-200 text-gray-700 text-xs hover:border-blue-300 hover:text-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <FileDown className="w-4 h-4 mr-1" /> CSV
+                        </button>
+                      </>
+                    )}
                     <button
                       onClick={() => startUpload({ mode: 'append', sourceId: source.id })}
                       disabled={isLoading}
