@@ -101,18 +101,19 @@ export const LinePanel: React.FC<LinePanelProps> = ({ element }) => {
         <div>
           <label className="block text-xs text-gray-600 mb-1">Start Point</label>
           <select
-            value={element.points?.[0]?.style || 'none'}
+            value={element.points?.[0] || 'none'}
             onChange={(e) =>
               handleUpdate({
                 points: [
-                  { ...element.points?.[0], style: e.target.value as any },
-                  element.points?.[1] || { x: 100, y: 100, style: 'none' },
+                  e.target.value as any,
+                  element.points?.[1] || 'none',
                 ],
               })
             }
             className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="none">None</option>
+            <option value="">None (empty)</option>
             <option value="arrow">Arrow</option>
             <option value="dot">Dot</option>
             <option value="square">Square</option>
@@ -123,18 +124,19 @@ export const LinePanel: React.FC<LinePanelProps> = ({ element }) => {
         <div>
           <label className="block text-xs text-gray-600 mb-1">End Point</label>
           <select
-            value={element.points?.[1]?.style || 'arrow'}
+            value={element.points?.[1] || 'arrow'}
             onChange={(e) =>
               handleUpdate({
                 points: [
-                  element.points?.[0] || { x: 0, y: 0, style: 'none' },
-                  { ...element.points?.[1], style: e.target.value as any },
+                  element.points?.[0] || 'none',
+                  e.target.value as any,
                 ],
               })
             }
             className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="none">None</option>
+            <option value="">None (empty)</option>
             <option value="arrow">Arrow</option>
             <option value="dot">Dot</option>
             <option value="square">Square</option>

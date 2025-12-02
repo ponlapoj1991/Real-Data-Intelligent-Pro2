@@ -106,21 +106,14 @@ export interface PPTTextElement extends PPTBaseElement {
 export type ImageElementFilterKeys = 'blur' | 'brightness' | 'contrast' | 'grayscale' | 'saturate' | 'hue-rotate' | 'opacity' | 'sepia' | 'invert';
 
 export interface ImageElementFilters {
-  'blur'?: string;
-  'brightness'?: string;
-  'contrast'?: string;
-  'grayscale'?: string;
-  'saturate'?: string;
-  'hue-rotate'?: string;
-  'sepia'?: string;
-  'invert'?: string;
-  'opacity'?: string;
+  type: ImageElementFilterKeys;
+  value: number;
 }
 
 export type ImageClipDataRange = [[number, number], [number, number]];
 
 export interface ImageElementClip {
-  range: ImageClipDataRange;
+  range?: ImageClipDataRange;
   shape: string;
 }
 
@@ -139,6 +132,7 @@ export interface PPTImageElement extends PPTBaseElement {
   radius?: number;
   colorMask?: string;
   imageType?: ImageType;
+  opacity?: number;
 }
 
 // ============================================
@@ -198,7 +192,7 @@ export interface PPTShapeElement extends PPTBaseElement {
 // Line Element
 // ============================================
 
-export type LinePoint = '' | 'arrow' | 'dot';
+export type LinePoint = '' | 'arrow' | 'dot' | 'none' | 'square';
 
 export interface PPTLineElement extends Omit<PPTBaseElement, 'height' | 'rotate'> {
   type: 'line';
@@ -206,12 +200,15 @@ export interface PPTLineElement extends Omit<PPTBaseElement, 'height' | 'rotate'
   end: [number, number];
   style: LineStyleType;
   color: string;
+  width?: number;
   points: [LinePoint, LinePoint];
   shadow?: PPTElementShadow;
   broken?: [number, number];
   broken2?: [number, number];
   curve?: [number, number];
   cubic?: [[number, number], [number, number]];
+  lineType?: 'straight' | 'curve' | 'polyline';
+  curveType?: 'quadratic' | 'cubic';
 }
 
 // ============================================
@@ -223,6 +220,8 @@ export type ChartType = 'bar' | 'column' | 'line' | 'pie' | 'ring' | 'area' | 'r
 export interface ChartOptions {
   lineSmooth?: boolean;
   stack?: boolean;
+  showLegend?: boolean;
+  showGrid?: boolean;
 }
 
 export interface ChartData {

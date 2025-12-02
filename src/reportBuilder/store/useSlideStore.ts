@@ -46,6 +46,7 @@ interface SlideStore {
   reorderSlides: (fromIndex: number, toIndex: number) => void;
   setCurrentSlide: (id: string) => void;
   updateSlideBackground: (id: string, background: Slide['background']) => void;
+  getCurrentSlide: () => Slide | null;
 
   // Actions - Elements
   addElement: (element: Omit<PPTElement, 'id'>) => void;
@@ -74,6 +75,10 @@ interface SlideStore {
   sendToBack: (id: string) => void;
   bringForward: (id: string) => void;
   sendBackward: (id: string) => void;
+  moveElementToTop: (id: string) => void; // Alias for bringToFront
+  moveElementToBottom: (id: string) => void; // Alias for sendToBack
+  moveElementUp: (id: string) => void; // Alias for bringForward
+  moveElementDown: (id: string) => void; // Alias for sendBackward
 
   // Actions - Canvas
   setCanvasScale: (scale: number) => void;
@@ -281,6 +286,12 @@ export const useSlideStore = create<SlideStore>((set, get) => ({
       presentation: { ...presentation, slides },
     });
     get().saveHistory();
+  },
+
+  getCurrentSlide: () => {
+    const { presentation, currentSlideId } = get();
+    if (!presentation || !currentSlideId) return null;
+    return presentation.slides.find(slide => slide.id === currentSlideId) || null;
   },
 
   // ============================================
@@ -567,6 +578,12 @@ export const useSlideStore = create<SlideStore>((set, get) => ({
     set({ presentation: { ...presentation, slides } });
     get().saveHistory();
   },
+
+  // Aliases for layer functions (Inspector panel compatibility)
+  moveElementToTop: (id) => get().bringToFront(id),
+  moveElementToBottom: (id) => get().sendToBack(id),
+  moveElementUp: (id) => get().bringForward(id),
+  moveElementDown: (id) => get().sendBackward(id),
 
   // ============================================
   // Canvas Actions
