@@ -224,7 +224,9 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
   };
 
   const closeRuleModal = () => {
-    closeRuleModal();
+    setIsRuleModalOpen(false);
+    setRuleDrafts({});
+    setNewRuleName('');
     setEditingTargetName(null);
   };
 
