@@ -160,6 +160,11 @@ export async function importPPTX(file: File): Promise<Presentation> {
         const width = json.size.width * ratio;
         const height = json.size.height * ratio;
 
+        // Extract theme colors (PPTist does this too)
+        const themeColors = json.themeColors || ['#5B8FF9', '#5AD8A6', '#5D7092', '#F6BD16', '#E86452'];
+        const defaultFontColor = themeColors[1] || '#000000';
+        const defaultFontName = 'Arial';
+
         const slides: Slide[] = [];
 
         for (const item of json.slides) {
@@ -226,8 +231,8 @@ export async function importPPTX(file: File): Promise<Presentation> {
                 left: el.left,
                 top: el.top,
                 rotate: el.rotate || 0,
-                defaultFontName: 'Arial',
-                defaultColor: '#000000',
+                defaultFontName: defaultFontName,
+                defaultColor: defaultFontColor,
                 content: convertFontSizePtToPx(el.content, ratio),
                 lineHeight: 1,
                 vertical: el.isVertical,
@@ -374,8 +379,8 @@ export async function importPPTX(file: File): Promise<Presentation> {
                 if (el.content) {
                   element.text = {
                     content: convertFontSizePtToPx(el.content, ratio),
-                    defaultFontName: 'Arial',
-                    defaultColor: '#000000',
+                    defaultFontName: defaultFontName,
+                    defaultColor: defaultFontColor,
                     align: 'middle',
                   };
                 }
@@ -582,9 +587,9 @@ export async function importPPTX(file: File): Promise<Presentation> {
           slides,
           theme: {
             backgroundColor: '#FFFFFF',
-            themeColors: json.themeColors || ['#5B8FF9', '#5AD8A6', '#5D7092', '#F6BD16', '#E86452'],
-            fontColor: '#000000',
-            fontName: 'Arial',
+            themeColors,
+            fontColor: defaultFontColor,
+            fontName: defaultFontName,
             outline: { width: 2, color: '#000000', style: 'solid' },
             shadow: { h: 0, v: 0, blur: 10, color: 'rgba(0, 0, 0, 0.5)' },
           },
