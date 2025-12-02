@@ -18,6 +18,7 @@ export enum ElementTypes {
   LATEX = 'latex',
   VIDEO = 'video',
   AUDIO = 'audio',
+  GROUP = 'group',
 }
 
 export enum ShapePathFormulasKeys {
@@ -346,6 +347,23 @@ export interface PPTAudioElement extends PPTBaseElement {
 }
 
 // ============================================
+// Group Element
+// ============================================
+
+export interface PPTGroupElement {
+  id: string;
+  type: 'group';
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  rotate: number;
+  elements: PPTElement[];
+  lock?: boolean;
+  name?: string;
+}
+
+// ============================================
 // Union Type
 // ============================================
 
@@ -358,7 +376,8 @@ export type PPTElement =
   | PPTTableElement
   | PPTLatexElement
   | PPTVideoElement
-  | PPTAudioElement;
+  | PPTAudioElement
+  | PPTGroupElement;
 
 // ============================================
 // Slide Background

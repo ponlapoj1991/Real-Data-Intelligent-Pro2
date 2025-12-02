@@ -11,6 +11,7 @@ import { ShapeElement } from './ShapeElement';
 import { LineElement } from './LineElement';
 import { TableElement } from './TableElement';
 import { ChartElement } from './ChartElement';
+import { GroupElement } from './GroupElement';
 
 interface ElementRendererProps {
   element: PPTElement;
@@ -86,6 +87,9 @@ export const ElementRenderer: React.FC<ElementRendererProps> = ({
 
       case 'chart':
         return <ChartElement element={element} isSelected={isSelected} />;
+
+      case 'group':
+        return <GroupElement element={element} isSelected={isSelected} />;
 
       case 'latex':
         return (

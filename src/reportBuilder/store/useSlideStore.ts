@@ -77,6 +77,10 @@ interface SlideStore {
   sendBackward: (id: string) => void;
   moveElementToTop: (id: string) => void; // Alias for bringToFront
   moveElementToBottom: (id: string) => void; // Alias for sendToBack
+
+  // Actions - Grouping
+  groupElements: (ids: string[]) => void;
+  ungroupElement: (groupId: string) => void;
   moveElementUp: (id: string) => void; // Alias for bringForward
   moveElementDown: (id: string) => void; // Alias for sendBackward
 
@@ -584,6 +588,101 @@ export const useSlideStore = create<SlideStore>((set, get) => ({
   moveElementToBottom: (id) => get().sendToBack(id),
   moveElementUp: (id) => get().bringForward(id),
   moveElementDown: (id) => get().sendBackward(id),
+
+  // ============================================
+  // Grouping Actions
+  // ============================================
+
+  groupElements: (ids) => {
+    const { presentation, currentSlideId } = get();
+    if (!presentation || !currentSlideId || ids.length < 2) return;
+
+    const currentSlide = presentation.slides.find(s => s.id === currentSlideId);
+    if (!currentSlide) return;
+
+    // Get elements to group
+    const elementsToGroup = currentSlide.elements.filter(el => ids.includes(el.id));
+    if (elementsToGroup.length < 2) return;
+
+    // Calculate bounding box
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    elementsToGroup.forEach(el => {
+      const elMaxX = el.left + el.width;
+      const elMaxY = el.top + ('height' in el ? el.height : 0);
+      minX = Math.min(minX, el.left);
+      minY = Math.min(minY, el.top);
+      maxX = Math.max(maxX, elMaxX);
+      maxY = Math.max(maxY, elMaxY);
+    });
+
+    // Create group element
+    const groupId = nanoid(10);
+    const groupElement: PPTElement = {
+      id: groupId,
+      type: 'group',
+      left: minX,
+      top: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+      rotate: 0,
+      elements: elementsToGroup.map(el => ({
+        ...el,
+        left: el.left - minX,
+        top: el.top - minY,
+      })),
+    };
+
+    // Remove grouped elements and add group
+    const newElements = currentSlide.elements.filter(el => !ids.includes(el.id));
+    newElements.push(groupElement);
+
+    const slides = presentation.slides.map(slide =>
+      slide.id === currentSlideId
+        ? { ...slide, elements: newElements }
+        : slide
+    );
+
+    set({
+      presentation: { ...presentation, slides },
+      selectedElementIds: [groupId],
+    });
+    get().saveHistory();
+  },
+
+  ungroupElement: (groupId) => {
+    const { presentation, currentSlideId } = get();
+    if (!presentation || !currentSlideId) return;
+
+    const currentSlide = presentation.slides.find(s => s.id === currentSlideId);
+    if (!currentSlide) return;
+
+    const groupElement = currentSlide.elements.find(el => el.id === groupId);
+    if (!groupElement || groupElement.type !== 'group') return;
+
+    // Restore elements with absolute positions
+    const restoredElements = groupElement.elements.map(el => ({
+      ...el,
+      left: el.left + groupElement.left,
+      top: el.top + groupElement.top,
+      id: nanoid(10), // Generate new IDs
+    }));
+
+    // Remove group and add restored elements
+    const newElements = currentSlide.elements.filter(el => el.id !== groupId);
+    newElements.push(...restoredElements);
+
+    const slides = presentation.slides.map(slide =>
+      slide.id === currentSlideId
+        ? { ...slide, elements: newElements }
+        : slide
+    );
+
+    set({
+      presentation: { ...presentation, slides },
+      selectedElementIds: restoredElements.map(el => el.id),
+    });
+    get().saveHistory();
+  },
 
   // ============================================
   // Canvas Actions

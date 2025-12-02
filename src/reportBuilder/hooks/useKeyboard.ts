@@ -17,6 +17,8 @@ export const useKeyboardShortcuts = () => {
     deleteElement,
     selectAll,
     duplicateElement,
+    groupElements,
+    ungroupElement,
   } = useSlideStore();
 
   useEffect(() => {
@@ -34,6 +36,7 @@ export const useKeyboardShortcuts = () => {
         if (isMod && e.key === 'v') return true;
         if (isMod && e.key === 'a') return true;
         if (isMod && e.key === 'd') return true;
+        if (isMod && e.key === 'g') return true;
         if (e.key === 'Delete' || e.key === 'Backspace') return true;
         return false;
       };
@@ -94,6 +97,18 @@ export const useKeyboardShortcuts = () => {
         return;
       }
 
+      // Group
+      if (isMod && !isShift && e.key === 'g' && selectedElementIds.length >= 2) {
+        groupElements(selectedElementIds);
+        return;
+      }
+
+      // Ungroup
+      if (isMod && isShift && e.key === 'g' && selectedElementIds.length === 1) {
+        ungroupElement(selectedElementIds[0]);
+        return;
+      }
+
       // Delete
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedElementIds.length > 0) {
         selectedElementIds.forEach(id => deleteElement(id));
@@ -132,5 +147,7 @@ export const useKeyboardShortcuts = () => {
     deleteElement,
     selectAll,
     duplicateElement,
+    groupElements,
+    ungroupElement,
   ]);
 };
