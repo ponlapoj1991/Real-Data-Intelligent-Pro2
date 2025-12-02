@@ -60,8 +60,12 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
   const [isSaving, setIsSaving] = useState(false);
 
   const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
-  const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
+  const [editingTargetName, setEditingTargetName] = useState<string | null>(null);
   const [newRuleName, setNewRuleName] = useState('');
+
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [saveName, setSaveName] = useState('');
+  const [saveError, setSaveError] = useState('');
 
   type RuleDraft = {
     sourceId: string;
@@ -81,6 +85,22 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
   };
 
   const [ruleDrafts, setRuleDrafts] = useState<Record<string, RuleDraft>>({});
+
+  const groupedRules = useMemo(
+    () => {
+      const order: string[] = [];
+      const grouping: Record<string, StructureRule[]> = {};
+      rules.forEach((rule) => {
+        if (!grouping[rule.targetName]) {
+          grouping[rule.targetName] = [];
+          order.push(rule.targetName);
+        }
+        grouping[rule.targetName].push(rule);
+      });
+      return order.map((targetName) => ({ targetName, rules: grouping[targetName] || [] }));
+    },
+    [rules]
+  );
 
   const { showToast } = useToast();
 
@@ -193,7 +213,7 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
       showToast('Select sources first', 'Choose one or more tables before adding columns.', 'warning');
       return;
     }
-    setEditingRuleId(null);
+    setEditingTargetName(null);
     setNewRuleName('');
     const drafts: Record<string, RuleDraft> = {};
     selectedSources.forEach((srcId) => {
@@ -203,10 +223,21 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
     setIsRuleModalOpen(true);
   };
 
-  const openEditRule = (rule: StructureRule) => {
-    setEditingRuleId(rule.id);
-    setNewRuleName(rule.targetName);
-    setRuleDrafts({ [rule.sourceId]: buildDraftForSource(rule.sourceId, rule) });
+  const closeRuleModal = () => {
+    closeRuleModal();
+    setEditingTargetName(null);
+  };
+
+  const openEditRule = (targetName: string) => {
+    const relevant = rules.filter((r) => r.targetName === targetName);
+    setEditingTargetName(targetName);
+    setNewRuleName(targetName);
+    const drafts: Record<string, RuleDraft> = {};
+    selectedSources.forEach((srcId) => {
+      const existing = relevant.find((r) => r.sourceId === srcId);
+      drafts[srcId] = buildDraftForSource(srcId, existing);
+    });
+    setRuleDrafts(drafts);
     setIsRuleModalOpen(true);
   };
 
@@ -227,57 +258,76 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
     const draftEntries = Object.values(ruleDrafts).filter((d) => d.sourceKey);
     if (!draftEntries.length) return;
 
+    const newRules: StructureRule[] = draftEntries.map((draft) => ({
+      id: crypto.randomUUID(),
+      sourceId: draft.sourceId,
+      targetName: trimmedName,
+      sourceKey: draft.sourceKey,
+      method: draft.method,
+      params: draft.params,
+      valueMap: Object.keys(draft.valueMap).length ? draft.valueMap : undefined,
+    }));
+
+    const existingOrder = groupedRules.map((g) => g.targetName);
     let nextRules: StructureRule[] = [];
-    if (editingRuleId) {
-      const existing = rules.find((r) => r.id === editingRuleId);
-      if (!existing) return;
-      const draft = draftEntries[0];
-      nextRules = rules.map((r) =>
-        r.id === editingRuleId
-          ? {
-              ...r,
-              targetName: trimmedName,
-              sourceKey: draft.sourceKey,
-              method: draft.method,
-              params: draft.params,
-              valueMap: Object.keys(draft.valueMap).length ? draft.valueMap : undefined,
-            }
-          : r
-      );
-    } else {
-      const newRules: StructureRule[] = draftEntries.map((draft) => ({
-        id: crypto.randomUUID(),
-        sourceId: draft.sourceId,
-        targetName: trimmedName,
-        sourceKey: draft.sourceKey,
-        method: draft.method,
-        params: draft.params,
-        valueMap: Object.keys(draft.valueMap).length ? draft.valueMap : undefined,
-      }));
-      // remove any existing mappings for same target/source to prevent duplicates
+
+    if (editingTargetName) {
       const filteredExisting = rules.filter(
-        (r) => !newRules.some((nr) => nr.sourceId === r.sourceId && nr.targetName === r.targetName)
+        (r) => r.targetName !== editingTargetName && r.targetName !== trimmedName
       );
-      nextRules = [...filteredExisting, ...newRules];
+      const orderWithout = existingOrder.filter((name) => name !== editingTargetName && name !== trimmedName);
+      const insertIndex = Math.max(existingOrder.indexOf(editingTargetName), 0);
+      const nextOrder = [...orderWithout];
+      nextOrder.splice(insertIndex, 0, trimmedName);
+
+      const bundle: Record<string, StructureRule[]> = {};
+      filteredExisting.forEach((r) => {
+        if (!bundle[r.targetName]) bundle[r.targetName] = [];
+        bundle[r.targetName].push(r);
+      });
+      bundle[trimmedName] = newRules;
+      const dedupedOrder: string[] = [];
+      nextOrder.forEach((name) => {
+        if (!dedupedOrder.includes(name)) dedupedOrder.push(name);
+      });
+      nextRules = dedupedOrder.flatMap((name) => bundle[name] || []);
+    } else {
+      const filteredExisting = rules.filter((r) => r.targetName !== trimmedName);
+      const orderWithout = existingOrder.filter((name) => name !== trimmedName);
+      const nextOrder = [...orderWithout, trimmedName];
+      const bundle: Record<string, StructureRule[]> = {};
+      filteredExisting.forEach((r) => {
+        if (!bundle[r.targetName]) bundle[r.targetName] = [];
+        bundle[r.targetName].push(r);
+      });
+      bundle[trimmedName] = newRules;
+      nextRules = nextOrder.flatMap((name) => bundle[name] || []);
     }
 
     setRules(nextRules);
-    setIsRuleModalOpen(false);
+    closeRuleModal();
     await updateActiveConfig(selectedSources, nextRules);
     await runQuery(true, nextRules);
   };
 
-  const removeRule = async (id: string) => {
-    const nextRules = rules.filter((r) => r.id !== id);
+  const removeRule = async (targetName: string) => {
+    const nextRules = rules.filter((r) => r.targetName !== targetName);
     setRules(nextRules);
     await updateActiveConfig(selectedSources, nextRules);
   };
 
-  const moveRule = async (index: number, direction: 'up' | 'down') => {
-    if ((direction === 'up' && index === 0) || (direction === 'down' && index === rules.length - 1)) return;
-    const next = [...rules];
-    const swapIndex = direction === 'up' ? index - 1 : index + 1;
-    [next[index], next[swapIndex]] = [next[swapIndex], next[index]];
+  const moveRule = async (targetName: string, direction: 'up' | 'down') => {
+    const order = groupedRules.map((g) => g.targetName);
+    const idx = order.indexOf(targetName);
+    if (idx === -1) return;
+    if ((direction === 'up' && idx === 0) || (direction === 'down' && idx === order.length - 1)) return;
+    const swapIndex = direction === 'up' ? idx - 1 : idx + 1;
+    [order[idx], order[swapIndex]] = [order[swapIndex], order[idx]];
+    const bundle: Record<string, StructureRule[]> = {};
+    groupedRules.forEach((g) => {
+      bundle[g.targetName] = g.rules;
+    });
+    const next = order.flatMap((name) => bundle[name] || []);
     setRules(next);
     await updateActiveConfig(selectedSources, next);
   };
@@ -308,17 +358,30 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
     }
   };
 
-  const handleSave = async () => {
+  const openSaveModal = () => {
     if (!resultRows.length) {
       showToast('No results', 'Run Query before saving.', 'warning');
       return;
     }
+    const defaultName = activeConfig ? `${activeConfig.name} output` : `Structured ${selectedSources.length} files`;
+    setSaveName(defaultName);
+    setSaveError('');
+    setShowSaveModal(true);
+  };
+
+  const handleSave = async () => {
+    const trimmed = saveName.trim();
+    if (!trimmed) {
+      setSaveError('Please enter a table name.');
+      return;
+    }
     setIsSaving(true);
     const columns: ColumnConfig[] = inferColumns(resultRows[0]);
-    const updated = addDerivedDataSource(normalizedProject, `Structure ${selectedSources.length} files`, resultRows, columns, 'prepared');
+    const updated = addDerivedDataSource(normalizedProject, trimmed, resultRows, columns, 'prepared');
     await saveProject(updated);
     onUpdateProject(updated);
-    showToast('Saved', 'Structured table added to Preparation Data.', 'success');
+    showToast('Saved', `${trimmed} stored in Preparation Data.`, 'success');
+    setShowSaveModal(false);
     setTimeout(() => setIsSaving(false), 400);
   };
 
@@ -350,7 +413,7 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
         <div className="flex items-center space-x-3">
           {hasConfig && (
             <button
-              onClick={handleSave}
+              onClick={openSaveModal}
               disabled={isSaving}
               className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg shadow-sm hover:bg-blue-700 transition disabled:opacity-60"
             >
@@ -402,44 +465,51 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
               </div>
             </div>
             <div className="grid grid-cols-12 gap-3 text-sm font-semibold text-gray-500 px-2">
-              <span className="col-span-3">Source</span>
-              <span className="col-span-3">Source column</span>
-              <span className="col-span-4">Target column</span>
+              <span className="col-span-1 text-center">#</span>
+              <span className="col-span-5">Target column</span>
+              <span className="col-span-4">Sources</span>
               <span className="col-span-2 text-right">Actions</span>
             </div>
             <div className="space-y-2 mt-2">
-              {rules.map((rule, idx) => {
-                const source = allSources.find((s) => s.id === rule.sourceId);
+              {groupedRules.map((group, idx) => {
+                const sourceLabels = group.rules
+                  .map((r) => allSources.find((s) => s.id === r.sourceId)?.name || 'Source removed')
+                  .join(', ');
+                const methods = Array.from(new Set(group.rules.map((r) => r.method.replace('_', ' '))));
                 return (
-                  <div key={rule.id} className="grid grid-cols-12 gap-3 items-center px-2 py-2 rounded-lg hover:bg-gray-50">
-                    <div className="col-span-3 text-sm text-gray-800 truncate">{source?.name || 'Source removed'}</div>
-                    <div className="col-span-3 text-sm text-gray-800 truncate">{rule.sourceKey}</div>
-                    <div className="col-span-4">
-                      <p className="font-medium text-gray-900 truncate">{rule.targetName}</p>
-                      <p className="text-xs text-gray-500 uppercase tracking-wide">{rule.method.replace('_', ' ')}</p>
+                  <div key={group.targetName} className="grid grid-cols-12 gap-3 items-center px-2 py-2 rounded-lg hover:bg-gray-50">
+                    <div className="col-span-1 text-center text-sm text-gray-500">{idx + 1}</div>
+                    <div className="col-span-5">
+                      <p className="font-medium text-gray-900 truncate">{group.targetName}</p>
+                      <p className="text-xs text-gray-500 uppercase tracking-wide truncate">{methods.join(' • ')}</p>
+                    </div>
+                    <div className="col-span-4 text-sm text-gray-800 truncate" title={sourceLabels}>
+                      {sourceLabels || 'Sources removed'}
                     </div>
                     <div className="col-span-2 flex items-center justify-end space-x-2 text-xs text-gray-500">
-                      <button onClick={() => openEditRule(rule)} className="hover:text-blue-600">Edit</button>
+                      <button onClick={() => openEditRule(group.targetName)} className="hover:text-blue-600">
+                        Edit
+                      </button>
                       <span className="text-gray-300">|</span>
-                      <button onClick={() => moveRule(idx, 'up')} disabled={idx === 0} className="hover:text-gray-700 disabled:opacity-30">
+                      <button onClick={() => moveRule(group.targetName, 'up')} disabled={idx === 0} className="hover:text-gray-700 disabled:opacity-30">
                         <ChevronUp className="w-3 h-3" />
                       </button>
                       <button
-                        onClick={() => moveRule(idx, 'down')}
-                        disabled={idx === rules.length - 1}
+                        onClick={() => moveRule(group.targetName, 'down')}
+                        disabled={idx === groupedRules.length - 1}
                         className="hover:text-gray-700 disabled:opacity-30"
                       >
                         <ChevronDown className="w-3 h-3" />
                       </button>
                       <span className="text-gray-300">|</span>
-                      <button onClick={() => removeRule(rule.id)} className="hover:text-red-500">
+                      <button onClick={() => removeRule(group.targetName)} className="hover:text-red-500">
                         <X className="w-3 h-3" />
                       </button>
                     </div>
                   </div>
                 );
               })}
-              {rules.length === 0 && (
+              {groupedRules.length === 0 && (
                 <div className="px-2 py-6">
                   <EmptyState
                     icon={Table2}
@@ -643,10 +713,10 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
           <div className="bg-white rounded-xl shadow-2xl max-w-5xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm uppercase tracking-wide text-blue-600 font-semibold">{editingRuleId ? 'Edit' : 'Add'} column</p>
+                <p className="text-sm uppercase tracking-wide text-blue-600 font-semibold">{editingTargetName ? 'Edit' : 'Add'} column</p>
                 <h3 className="text-xl font-bold text-gray-900">Column mapping</h3>
               </div>
-              <button onClick={() => setIsRuleModalOpen(false)} className="text-gray-400 hover:text-gray-600">×</button>
+              <button onClick={closeRuleModal} className="text-gray-400 hover:text-gray-600">×</button>
             </div>
 
             <div className="grid grid-cols-1 gap-3">
@@ -662,9 +732,10 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
             </div>
 
             <div className="space-y-4">
-              {Object.values(ruleDrafts).map((draft) => {
-                const src = allSources.find((s) => s.id === draft.sourceId);
-                if (!src) return null;
+              {selectedSources.map((srcId) => {
+                const draft = ruleDrafts[srcId];
+                const src = allSources.find((s) => s.id === srcId);
+                if (!src || !draft) return null;
                 return (
                   <div key={draft.sourceId} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
                     <div className="flex items-center justify-between mb-3">
@@ -688,7 +759,7 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
                               const analysis = srcRef && nextKey ? analyzeSourceColumn(srcRef.rows, nextKey) : null;
                               let nextMethod = curr.method;
                               let nextParams = curr.params || {};
-                              if (!editingRuleId) {
+                              if (!editingTargetName) {
                                 if (analysis?.isDateLikely) {
                                   nextMethod = 'date_extract';
                                   nextParams = { datePart: 'date_only' };
@@ -705,7 +776,7 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
                                 sourceKey: nextKey,
                                 method: nextMethod,
                                 params: nextParams,
-                                valueMap: editingRuleId ? curr.valueMap : {},
+                                valueMap: editingTargetName ? curr.valueMap : {},
                               };
                             });
                           }}
@@ -1014,14 +1085,58 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
             </div>
 
             <div className="flex justify-end space-x-3 pt-2">
-              <button onClick={() => setIsRuleModalOpen(false)} className="px-4 py-2 text-sm text-gray-600 rounded-lg hover:bg-gray-50">
+              <button onClick={closeRuleModal} className="px-4 py-2 text-sm text-gray-600 rounded-lg hover:bg-gray-50">
                 Cancel
               </button>
               <button
                 onClick={saveRule}
                 className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg shadow-sm hover:bg-blue-700"
               >
-                {editingRuleId ? 'Update' : 'Add column'}
+                {editingTargetName ? 'Update' : 'Add column'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSaveModal && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-40 px-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-blue-600 font-semibold">Save structured output</p>
+                <h3 className="text-lg font-semibold text-gray-900">Preparation Data</h3>
+              </div>
+              <button onClick={() => setShowSaveModal(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-gray-700">Table name</label>
+              <input
+                value={saveName}
+                onChange={(e) => {
+                  setSaveName(e.target.value);
+                  setSaveError('');
+                }}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+                placeholder="Structured table name"
+              />
+              {saveError && <p className="text-xs text-red-500">{saveError}</p>}
+            </div>
+
+            <div className="flex justify-end space-x-3 mt-6">
+              <button onClick={() => setShowSaveModal(false)} className="px-4 py-2 text-sm text-gray-600 rounded-lg hover:bg-gray-50">
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={isSaving}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg shadow-sm hover:bg-blue-700 disabled:opacity-60 flex items-center"
+              >
+                {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                Save
               </button>
             </div>
           </div>
