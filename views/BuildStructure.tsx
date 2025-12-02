@@ -47,25 +47,32 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
 
   const [rules, setRules] = useState<StructureRule[]>([]);
   const [resultRows, setResultRows] = useState<RawRow[]>([]);
+  const [previewTotal, setPreviewTotal] = useState<number>(0);
   const [isRunning, setIsRunning] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
   const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   const [newRuleName, setNewRuleName] = useState('');
-  const [selectedRuleSource, setSelectedRuleSource] = useState<string>('');
-  const [selectedSourceCol, setSelectedSourceCol] = useState('');
-  const [selectedMethod, setSelectedMethod] = useState<TransformMethod>('copy');
-  const [methodParams, setMethodParams] = useState<any>({});
-  const [valueMap, setValueMap] = useState<Record<string, string>>({});
-  const [manualMapKey, setManualMapKey] = useState('');
-  const [manualMapValue, setManualMapValue] = useState('');
-  const [sourceAnalysis, setSourceAnalysis] = useState<{
-    isArrayLikely: boolean;
-    isDateLikely: boolean;
-    uniqueTags: string[];
-    sampleValues: string[];
-  } | null>(null);
+
+  type RuleDraft = {
+    sourceId: string;
+    sourceKey: string;
+    method: TransformMethod;
+    params: any;
+    valueMap: Record<string, string>;
+    manualKey: string;
+    manualValue: string;
+    analysis: {
+      isArrayLikely: boolean;
+      isDateLikely: boolean;
+      uniqueTags: string[];
+      sampleValues: string[];
+    } | null;
+    uniqueValues: string[];
+  };
+
+  const [ruleDrafts, setRuleDrafts] = useState<Record<string, RuleDraft>>({});
 
   const { showToast } = useToast();
 
@@ -89,7 +96,45 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
       setRules([]);
     }
     setResultRows([]);
+    const sum = (activeConfig?.sourceIds || []).reduce((acc, id) => {
+      const src = allSources.find((s) => s.id === id);
+      return acc + (src?.rows.length || 0);
+    }, 0);
+    setPreviewTotal(sum);
   }, [activeConfig]);
+
+  const buildDraftForSource = (sourceId: string, existing?: StructureRule): RuleDraft => {
+    const src = allSources.find((s) => s.id === sourceId);
+    const firstCol = existing?.sourceKey || src?.columns[0]?.key || '';
+    const analysis = src && firstCol ? analyzeSourceColumn(src.rows, firstCol) : null;
+    const inferredMethod: TransformMethod = existing?.method
+      ? existing.method
+      : analysis?.isDateLikely
+      ? 'date_extract'
+      : analysis?.isArrayLikely
+      ? 'array_count'
+      : 'copy';
+    return {
+      sourceId,
+      sourceKey: firstCol,
+      method: inferredMethod,
+      params: existing?.params || (inferredMethod === 'date_extract' ? { datePart: 'date_only' } : {}),
+      valueMap: existing?.valueMap || {},
+      manualKey: '',
+      manualValue: '',
+      analysis,
+      uniqueValues:
+        src && firstCol ? getAllUniqueValues(src.rows, firstCol, inferredMethod || 'copy', 5000) : [],
+    };
+  };
+
+  const refreshDraftAnalysis = (srcId: string, draft: RuleDraft) => {
+    const src = allSources.find((s) => s.id === srcId);
+    if (!src || !draft.sourceKey) return draft;
+    const analysis = analyzeSourceColumn(src.rows, draft.sourceKey);
+    const uniqueValues = getAllUniqueValues(src.rows, draft.sourceKey, draft.method, 5000);
+    return { ...draft, analysis, uniqueValues };
+  };
 
   const persistConfigs = async (nextConfigs: BuildStructureConfig[], nextActiveId?: string | null) => {
     setConfigs(nextConfigs);
@@ -142,84 +187,76 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
     }
     setEditingRuleId(null);
     setNewRuleName('');
-    setSelectedRuleSource(selectedSources[0]);
-    const firstColumns = allSources.find((s) => s.id === selectedSources[0])?.columns || [];
-    setSelectedSourceCol(firstColumns[0]?.key || '');
-    setSelectedMethod('copy');
-    setMethodParams({});
-    setValueMap({});
-    setManualMapKey('');
-    setManualMapValue('');
-    setSourceAnalysis(null);
+    const drafts: Record<string, RuleDraft> = {};
+    selectedSources.forEach((srcId) => {
+      drafts[srcId] = buildDraftForSource(srcId);
+    });
+    setRuleDrafts(drafts);
     setIsRuleModalOpen(true);
   };
 
   const openEditRule = (rule: StructureRule) => {
     setEditingRuleId(rule.id);
     setNewRuleName(rule.targetName);
-    setSelectedRuleSource(rule.sourceId);
-    setSelectedSourceCol(rule.sourceKey);
-    setSelectedMethod(rule.method);
-    setMethodParams(rule.params || {});
-    setValueMap(rule.valueMap || {});
-    const src = allSources.find((s) => s.id === rule.sourceId);
-    if (src) {
-      const analysis = analyzeSourceColumn(src.rows, rule.sourceKey);
-      setSourceAnalysis(analysis);
-    }
+    setRuleDrafts({ [rule.sourceId]: buildDraftForSource(rule.sourceId, rule) });
     setIsRuleModalOpen(true);
   };
 
-  const handleRuleSourceChange = (srcId: string) => {
-    setSelectedRuleSource(srcId);
-    const src = allSources.find((s) => s.id === srcId);
-    setSelectedSourceCol(src?.columns[0]?.key || '');
-    if (src && src.columns[0]) {
-      const analysis = analyzeSourceColumn(src.rows, src.columns[0].key);
-      setSourceAnalysis(analysis);
-    } else {
-      setSourceAnalysis(null);
-    }
-  };
-
-  const handleSourceColSelect = (colKey: string) => {
-    setSelectedSourceCol(colKey);
-    const src = allSources.find((s) => s.id === selectedRuleSource);
-    if (!src) return;
-    const analysis = analyzeSourceColumn(src.rows, colKey);
-    setSourceAnalysis(analysis);
-    if (!editingRuleId) {
-      if (analysis.isDateLikely) {
-        setSelectedMethod('date_extract');
-        setMethodParams({ datePart: 'date_only' });
-      } else if (analysis.isArrayLikely) {
-        setSelectedMethod('array_count');
-        setMethodParams({});
-      } else {
-        setSelectedMethod('copy');
-        setMethodParams({});
-      }
-      setValueMap({});
-    }
+  const updateDraft = (srcId: string, updater: (draft: RuleDraft) => RuleDraft) => {
+    setRuleDrafts((prev) => {
+      const next = { ...prev };
+      const current = prev[srcId];
+      if (!current) return prev;
+      next[srcId] = refreshDraftAnalysis(srcId, updater(current));
+      return next;
+    });
   };
 
   const saveRule = async () => {
-    if (!newRuleName || !selectedSourceCol || !selectedRuleSource) return;
-    const newRule: StructureRule = {
-      id: editingRuleId || crypto.randomUUID(),
-      sourceId: selectedRuleSource,
-      targetName: newRuleName,
-      sourceKey: selectedSourceCol,
-      method: selectedMethod,
-      params: methodParams,
-      valueMap: Object.keys(valueMap).length ? valueMap : undefined,
-    };
-    const nextRules = editingRuleId
-      ? rules.map((r) => (r.id === editingRuleId ? newRule : r))
-      : [...rules, newRule];
+    const trimmedName = newRuleName.trim();
+    if (!trimmedName) return;
+
+    const draftEntries = Object.values(ruleDrafts).filter((d) => d.sourceKey);
+    if (!draftEntries.length) return;
+
+    let nextRules: StructureRule[] = [];
+    if (editingRuleId) {
+      const existing = rules.find((r) => r.id === editingRuleId);
+      if (!existing) return;
+      const draft = draftEntries[0];
+      nextRules = rules.map((r) =>
+        r.id === editingRuleId
+          ? {
+              ...r,
+              targetName: trimmedName,
+              sourceKey: draft.sourceKey,
+              method: draft.method,
+              params: draft.params,
+              valueMap: Object.keys(draft.valueMap).length ? draft.valueMap : undefined,
+            }
+          : r
+      );
+    } else {
+      const newRules: StructureRule[] = draftEntries.map((draft) => ({
+        id: crypto.randomUUID(),
+        sourceId: draft.sourceId,
+        targetName: trimmedName,
+        sourceKey: draft.sourceKey,
+        method: draft.method,
+        params: draft.params,
+        valueMap: Object.keys(draft.valueMap).length ? draft.valueMap : undefined,
+      }));
+      // remove any existing mappings for same target/source to prevent duplicates
+      const filteredExisting = rules.filter(
+        (r) => !newRules.some((nr) => nr.sourceId === r.sourceId && nr.targetName === r.targetName)
+      );
+      nextRules = [...filteredExisting, ...newRules];
+    }
+
     setRules(nextRules);
     setIsRuleModalOpen(false);
     await updateActiveConfig(selectedSources, nextRules);
+    await runQuery(true, nextRules);
   };
 
   const removeRule = async (id: string) => {
@@ -237,30 +274,30 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
     await updateActiveConfig(selectedSources, next);
   };
 
-  const uniqueValuesForMapping = useMemo(() => {
-    const src = allSources.find((s) => s.id === selectedRuleSource);
-    if (!src || !selectedSourceCol) return [] as string[];
-    return getAllUniqueValues(src.rows, selectedSourceCol, selectedMethod, 5000);
-  }, [allSources, selectedRuleSource, selectedSourceCol, selectedMethod]);
-
-  const runQuery = async () => {
-    if (!selectedSources.length || !rules.length) {
+  const runQuery = async (silent = false, overrideRules?: StructureRule[]) => {
+    const workingRules = overrideRules || rules;
+    if (!selectedSources.length || !workingRules.length) {
       showToast('Setup incomplete', 'Choose sources and add mappings before querying.', 'warning');
       return;
     }
-    setIsRunning(true);
+    if (!silent) {
+      setIsRunning(true);
+    }
     const output: RawRow[] = [];
     selectedSources.forEach((sourceId) => {
       const source = allSources.find((s) => s.id === sourceId);
       if (!source) return;
-      const scopedRules = rules.filter((r) => r.sourceId === sourceId);
+      const scopedRules = workingRules.filter((r) => r.sourceId === sourceId);
       if (!scopedRules.length) return;
       const baseRules = scopedRules.map(({ sourceId: _sid, ...rest }) => rest);
       const structured = applyTransformation(source.rows, baseRules);
       output.push(...structured);
     });
     setResultRows(output);
-    setTimeout(() => setIsRunning(false), 300);
+    setPreviewTotal(output.length);
+    if (!silent) {
+      setTimeout(() => setIsRunning(false), 300);
+    }
   };
 
   const handleSave = async () => {
@@ -278,6 +315,7 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
   };
 
   const hasConfig = Boolean(activeConfig);
+  const previewRowCount = resultRows.length || previewTotal || 0;
 
   return (
     <div className="h-full flex flex-col px-10 py-8 overflow-y-auto">
@@ -420,11 +458,23 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
             )}
           </div>
 
-          <div className="border border-gray-200 rounded-xl bg-white shadow-sm">
+            <div className="border border-gray-200 rounded-xl bg-white shadow-sm">
             <div className="px-5 py-4 flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-500">Preview</p>
-                <h3 className="font-semibold text-gray-900">{resultRows.length.toLocaleString()} rows</h3>
+                <h3 className="font-semibold text-gray-900">{previewRowCount.toLocaleString()} rows</h3>
+                {selectedSources.length > 0 && (
+                  <p className="text-xs text-gray-500">
+                    {selectedSources
+                      .map((id) => {
+                        const src = allSources.find((s) => s.id === id);
+                        if (!src) return null;
+                        return `${src.name} (${src.rows.length.toLocaleString()})`;
+                      })
+                      .filter(Boolean)
+                      .join(' + ')}
+                  </p>
+                )}
               </div>
             </div>
             <div className="overflow-x-auto">
@@ -582,202 +632,275 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
 
       {isRuleModalOpen && (
         <div className="fixed inset-0 bg-black/40 z-40 flex items-center justify-center px-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-6 space-y-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-5xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm uppercase tracking-wide text-blue-600 font-semibold">{editingRuleId ? 'Edit' : 'Add'} column</p>
-                <h3 className="text-xl font-bold text-gray-900">Mapping</h3>
+                <h3 className="text-xl font-bold text-gray-900">Column mapping</h3>
               </div>
               <button onClick={() => setIsRuleModalOpen(false)} className="text-gray-400 hover:text-gray-600">×</button>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-3">
               <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-700">Source table</label>
-                <select
-                  value={selectedRuleSource}
-                  onChange={(e) => handleRuleSourceChange(e.target.value)}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                >
-                  {selectedSources.map((id) => {
-                    const src = allSources.find((s) => s.id === id);
-                    if (!src) return null;
-                    return (
-                      <option key={id} value={id}>
-                        {src.name}
-                      </option>
-                    );
-                  })}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-700">Source column</label>
-                <select
-                  value={selectedSourceCol}
-                  onChange={(e) => handleSourceColSelect(e.target.value)}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                >
-                  {(
-                    allSources.find((s) => s.id === selectedRuleSource)?.columns || []
-                  ).map((col) => (
-                    <option key={col.key} value={col.key}>
-                      {col.key}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-700">Target column</label>
+                <label className="text-sm font-medium text-gray-700">Target column name</label>
                 <input
                   value={newRuleName}
                   onChange={(e) => setNewRuleName(e.target.value)}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                  placeholder="Target name"
+                  placeholder="e.g. Date"
                 />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-700">Method</label>
-                <select
-                  value={selectedMethod}
-                  onChange={(e) => setSelectedMethod(e.target.value as TransformMethod)}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                >
-                  <option value="copy">Copy</option>
-                  <option value="array_count">Array count</option>
-                  <option value="array_join">Array join</option>
-                  <option value="array_extract">Array extract</option>
-                  <option value="array_includes">Array includes</option>
-                  <option value="date_extract">Date extract</option>
-                  <option value="date_format">Date format</option>
-                </select>
               </div>
             </div>
 
-            {selectedMethod === 'array_join' && (
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-700">Delimiter</label>
-                  <input
-                    value={methodParams.delimiter || ', '}
-                    onChange={(e) => setMethodParams({ ...methodParams, delimiter: e.target.value })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                  />
-                </div>
-              </div>
-            )}
+            <div className="space-y-4">
+              {Object.values(ruleDrafts).map((draft) => {
+                const src = allSources.find((s) => s.id === draft.sourceId);
+                if (!src) return null;
+                return (
+                  <div key={draft.sourceId} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                    <div className="flex items-center justify-between mb-3">
+                      <div>
+                        <p className="text-xs text-gray-500 uppercase tracking-wide">Source</p>
+                        <h4 className="font-semibold text-gray-900">{src.name}</h4>
+                      </div>
+                      <div className="text-xs text-gray-600 bg-white border border-gray-200 rounded-full px-3 py-1">
+                        {src.rows.length.toLocaleString()} rows
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-gray-700">Source column</label>
+                        <select
+                          value={draft.sourceKey}
+                          onChange={(e) => {
+                            const nextKey = e.target.value;
+                            updateDraft(draft.sourceId, (curr) => {
+                              const srcRef = allSources.find((s) => s.id === draft.sourceId);
+                              const analysis = srcRef && nextKey ? analyzeSourceColumn(srcRef.rows, nextKey) : null;
+                              let nextMethod = curr.method;
+                              let nextParams = curr.params || {};
+                              if (!editingRuleId) {
+                                if (analysis?.isDateLikely) {
+                                  nextMethod = 'date_extract';
+                                  nextParams = { datePart: 'date_only' };
+                                } else if (analysis?.isArrayLikely) {
+                                  nextMethod = 'array_count';
+                                  nextParams = {};
+                                } else {
+                                  nextMethod = 'copy';
+                                  nextParams = {};
+                                }
+                              }
+                              return {
+                                ...curr,
+                                sourceKey: nextKey,
+                                method: nextMethod,
+                                params: nextParams,
+                                valueMap: editingRuleId ? curr.valueMap : {},
+                              };
+                            });
+                          }}
+                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                        >
+                          {(src.columns || []).map((col) => (
+                            <option key={col.key} value={col.key}>
+                              {col.key}
+                            </option>
+                          ))}
+                        </select>
+                        {draft.analysis?.sampleValues?.length ? (
+                          <p className="text-xs text-gray-500">Sample: {draft.analysis.sampleValues.slice(0, 3).join(', ')}</p>
+                        ) : null}
+                      </div>
 
-            {selectedMethod === 'array_extract' && (
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-700">Index</label>
-                  <input
-                    type="number"
-                    value={methodParams.index ?? 0}
-                    onChange={(e) => setMethodParams({ ...methodParams, index: Number(e.target.value) })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                  />
-                </div>
-              </div>
-            )}
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-gray-700">Extraction logic</label>
+                        <select
+                          value={draft.method}
+                          onChange={(e) => {
+                            const method = e.target.value as TransformMethod;
+                            updateDraft(draft.sourceId, (curr) => ({
+                              ...curr,
+                              method,
+                              params:
+                                method === 'date_extract'
+                                  ? { datePart: curr.params?.datePart || 'date_only' }
+                                  : method === 'date_format'
+                                  ? { format: curr.params?.format || 'YYYY-MM-DD' }
+                                  : method === 'array_join'
+                                  ? { delimiter: curr.params?.delimiter || ', ' }
+                                  : method === 'array_extract'
+                                  ? { index: curr.params?.index ?? 0 }
+                                  : method === 'array_includes'
+                                  ? { keyword: curr.params?.keyword || '' }
+                                  : {},
+                            }));
+                          }}
+                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                        >
+                          <option value="copy">Direct copy</option>
+                          <option value="array_count">Array count</option>
+                          <option value="array_join">Array join</option>
+                          <option value="array_extract">Array extract</option>
+                          <option value="array_includes">Array includes</option>
+                          <option value="date_extract">Date extract</option>
+                          <option value="date_format">Date format</option>
+                        </select>
+                      </div>
+                    </div>
 
-            {selectedMethod === 'array_includes' && (
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-700">Keyword</label>
-                  <input
-                    value={methodParams.keyword || ''}
-                    onChange={(e) => setMethodParams({ ...methodParams, keyword: e.target.value })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                  />
-                </div>
-              </div>
-            )}
+                    {draft.method === 'array_join' && (
+                      <div className="grid grid-cols-2 gap-4 mt-3">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-gray-700">Delimiter</label>
+                          <input
+                            value={draft.params?.delimiter || ', '}
+                            onChange={(e) => updateDraft(draft.sourceId, (curr) => ({
+                              ...curr,
+                              params: { ...curr.params, delimiter: e.target.value },
+                            }))}
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                          />
+                        </div>
+                      </div>
+                    )}
 
-            {selectedMethod === 'date_extract' && (
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-700">Date part</label>
-                  <select
-                    value={methodParams.datePart || 'date_only'}
-                    onChange={(e) => setMethodParams({ ...methodParams, datePart: e.target.value })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                  >
-                    <option value="date_only">Date only</option>
-                    <option value="time_only">Time only</option>
-                    <option value="year">Year</option>
-                    <option value="month">Month</option>
-                  </select>
-                </div>
-              </div>
-            )}
+                    {draft.method === 'array_extract' && (
+                      <div className="grid grid-cols-2 gap-4 mt-3">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-gray-700">Index</label>
+                          <input
+                            type="number"
+                            value={draft.params?.index ?? 0}
+                            onChange={(e) => updateDraft(draft.sourceId, (curr) => ({
+                              ...curr,
+                              params: { ...curr.params, index: Number(e.target.value) },
+                            }))}
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                          />
+                        </div>
+                      </div>
+                    )}
 
-            {selectedMethod === 'date_format' && (
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-700">Format</label>
-                  <input
-                    value={methodParams.format || 'YYYY-MM-DD'}
-                    onChange={(e) => setMethodParams({ ...methodParams, format: e.target.value })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                  />
-                </div>
-              </div>
-            )}
+                    {draft.method === 'array_includes' && (
+                      <div className="grid grid-cols-2 gap-4 mt-3">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-gray-700">Keyword</label>
+                          <input
+                            value={draft.params?.keyword || ''}
+                            onChange={(e) => updateDraft(draft.sourceId, (curr) => ({
+                              ...curr,
+                              params: { ...curr.params, keyword: e.target.value },
+                            }))}
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                          />
+                        </div>
+                      </div>
+                    )}
 
-            <div className="border border-gray-100 rounded-lg p-3 bg-gray-50">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-semibold text-gray-800">Value mapping</span>
-                <button
-                  onClick={() => setValueMap({})}
-                  className="text-xs text-gray-500 hover:text-red-500"
-                >
-                  Clear
-                </button>
-              </div>
-              <div className="grid grid-cols-5 gap-2 items-start">
-                <input
-                  value={manualMapKey}
-                  onChange={(e) => setManualMapKey(e.target.value)}
-                  className="col-span-2 border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                  placeholder="Match value"
-                />
-                <input
-                  value={manualMapValue}
-                  onChange={(e) => setManualMapValue(e.target.value)}
-                  className="col-span-2 border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                  placeholder="Mapped to"
-                />
-                <button
-                  onClick={() => {
-                    if (manualMapKey && manualMapValue) {
-                      setValueMap({ ...valueMap, [manualMapKey]: manualMapValue });
-                      setManualMapKey('');
-                      setManualMapValue('');
-                    }
-                  }}
-                  className="px-3 py-2 bg-gray-900 text-white text-sm rounded-lg"
-                >
-                  Add
-                </button>
-              </div>
-              <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-gray-700 max-h-24 overflow-y-auto">
-                {Object.entries(valueMap).map(([k, v]) => (
-                  <div key={k} className="flex items-center justify-between px-3 py-2 bg-white rounded border">
-                    <span className="truncate">{k}</span>
-                    <span className="text-gray-400">→</span>
-                    <span className="font-semibold truncate">{v}</span>
+                    {draft.method === 'date_extract' && (
+                      <div className="grid grid-cols-2 gap-4 mt-3">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-gray-700">Date part</label>
+                          <select
+                            value={draft.params?.datePart || 'date_only'}
+                            onChange={(e) => updateDraft(draft.sourceId, (curr) => ({
+                              ...curr,
+                              params: { ...curr.params, datePart: e.target.value },
+                            }))}
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                          >
+                            <option value="date_only">Date only</option>
+                            <option value="time_only">Time only</option>
+                            <option value="year">Year</option>
+                            <option value="month">Month</option>
+                          </select>
+                        </div>
+                      </div>
+                    )}
+
+                    {draft.method === 'date_format' && (
+                      <div className="grid grid-cols-2 gap-4 mt-3">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-gray-700">Format</label>
+                          <input
+                            value={draft.params?.format || 'YYYY-MM-DD'}
+                            onChange={(e) => updateDraft(draft.sourceId, (curr) => ({
+                              ...curr,
+                              params: { ...curr.params, format: e.target.value },
+                            }))}
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="border border-gray-200 rounded-lg bg-white mt-4 p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-semibold text-gray-800">Value mapping</span>
+                        <button
+                          onClick={() => updateDraft(draft.sourceId, (curr) => ({ ...curr, valueMap: {} }))}
+                          className="text-xs text-gray-500 hover:text-red-500"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-5 gap-2 items-start">
+                        <input
+                          value={draft.manualKey}
+                          onChange={(e) => updateDraft(draft.sourceId, (curr) => ({ ...curr, manualKey: e.target.value }))}
+                          className="col-span-2 border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                          placeholder="Original value"
+                        />
+                        <input
+                          value={draft.manualValue}
+                          onChange={(e) => updateDraft(draft.sourceId, (curr) => ({ ...curr, manualValue: e.target.value }))}
+                          className="col-span-2 border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                          placeholder="Mapped to"
+                        />
+                        <button
+                          onClick={() => {
+                            if (draft.manualKey && draft.manualValue) {
+                              updateDraft(draft.sourceId, (curr) => ({
+                                ...curr,
+                                valueMap: { ...curr.valueMap, [draft.manualKey]: draft.manualValue },
+                                manualKey: '',
+                                manualValue: '',
+                              }));
+                            }
+                          }}
+                          className="px-3 py-2 bg-gray-900 text-white text-sm rounded-lg"
+                        >
+                          Add
+                        </button>
+                      </div>
+                      <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-gray-700 max-h-24 overflow-y-auto">
+                        {Object.entries(draft.valueMap).map(([k, v]) => (
+                          <div key={k} className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded border">
+                            <span className="truncate">{k}</span>
+                            <span className="text-gray-400">→</span>
+                            <span className="font-semibold truncate">{v}</span>
+                          </div>
+                        ))}
+                        {Object.keys(draft.valueMap).length === 0 &&
+                          draft.uniqueValues.slice(0, 6).map((val) => (
+                            <button
+                              key={val}
+                              onClick={() => updateDraft(draft.sourceId, (curr) => ({
+                                ...curr,
+                                valueMap: { ...curr.valueMap, [val]: val },
+                              }))}
+                              className="px-3 py-2 bg-white rounded border text-left hover:border-blue-400"
+                            >
+                              {val}
+                            </button>
+                          ))}
+                      </div>
+                    </div>
                   </div>
-                ))}
-                {Object.keys(valueMap).length === 0 && sourceAnalysis && uniqueValuesForMapping.slice(0, 6).map((val) => (
-                  <button
-                    key={val}
-                    onClick={() => setValueMap({ ...valueMap, [val]: val })}
-                    className="px-3 py-2 bg-white rounded border text-left hover:border-blue-400"
-                  >
-                    {val}
-                  </button>
-                ))}
-              </div>
+                );
+              })}
             </div>
 
             <div className="flex justify-end space-x-3 pt-2">
@@ -788,7 +911,7 @@ const BuildStructure: React.FC<BuildStructureProps> = ({ project, onUpdateProjec
                 onClick={saveRule}
                 className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg shadow-sm hover:bg-blue-700"
               >
-                Save
+                {editingRuleId ? 'Update' : 'Add column'}
               </button>
             </div>
           </div>
