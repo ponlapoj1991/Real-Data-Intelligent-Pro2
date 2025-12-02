@@ -159,7 +159,7 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, kind,
   const meta = titles[kind];
 
   return (
-    <div className="p-8 max-w-6xl mx-auto space-y-6">
+    <div className="p-8 max-w-7xl mx-auto space-y-6">
       <input
         ref={fileInputRef}
         type="file"
@@ -238,7 +238,7 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, kind,
         </div>
 
       <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 text-sm text-gray-500">
+        <div className="flex items-center justify-between px-6 py-3 border-b border-gray-100 text-sm text-gray-500">
           <div className="flex items-center space-x-2">
             <span className="text-xs uppercase tracking-wide text-gray-400">Overview</span>
             <span className="text-gray-300">•</span>
@@ -255,12 +255,12 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, kind,
         </div>
 
         <div className="divide-y divide-gray-100">
-          <div className="grid grid-cols-[60px,1.6fr,1fr,1.25fr,1fr,1.6fr] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
-            <span>No.</span>
+          <div className="grid grid-cols-[72px,2fr,1fr,1.2fr,1fr,1.6fr] px-6 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500 items-center">
+            <span className="text-center">No.</span>
             <span>Table name</span>
-            <span>Rows</span>
-            <span>Updated</span>
-            <span>Status</span>
+            <span className="text-center">Rows</span>
+            <span className="text-center">Updated</span>
+            <span className="text-center">Status</span>
             <span className="text-right">Action</span>
           </div>
 
@@ -270,15 +270,15 @@ const DataIngest: React.FC<DataIngestProps> = ({ project, onUpdateProject, kind,
             sources.map((source, idx) => {
               const isActive = normalizedProject.activeDataSourceId === source.id;
               return (
-                <div key={source.id} className="grid grid-cols-[60px,1.6fr,1fr,1.25fr,1fr,1.6fr] px-4 py-3 items-center text-sm hover:bg-gray-50 gap-2">
-                  <span className="text-gray-500">{idx + 1}</span>
+                <div key={source.id} className="grid grid-cols-[72px,2fr,1fr,1.2fr,1fr,1.6fr] px-6 py-3 items-center text-sm hover:bg-gray-50 gap-2">
+                  <span className="text-gray-500 text-center">{idx + 1}</span>
                   <div>
                     <div className="font-semibold text-gray-900">{source.name}</div>
                     <div className="text-xs text-gray-500">{kind === 'ingestion' ? 'Uploaded table' : 'Prepared output'}</div>
                   </div>
-                  <span className="text-gray-700">{source.rows.length.toLocaleString()}</span>
-                  <span className="text-gray-700">{new Date(source.updatedAt).toLocaleString()}</span>
-                  <div>
+                  <span className="text-gray-700 text-center">{source.rows.length.toLocaleString()}</span>
+                  <span className="text-gray-700 text-center">{new Date(source.updatedAt).toLocaleString()}</span>
+                  <div className="flex justify-center">
                     {isActive ? (
                       <span className="inline-flex items-center px-2 py-1 text-xs rounded-full bg-green-50 text-green-700 border border-green-100">Active</span>
                     ) : (
